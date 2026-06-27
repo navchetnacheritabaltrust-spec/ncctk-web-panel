@@ -4,7 +4,7 @@ import logo from "@/app/api/helperfile/Images/logo";
 import semkariLogo from "@/app/api/helperfile/Images/semkariLogo";
 
 export const TrsutData={
-    name:"नवचेतना चेरिटेबल ट्रस्ट डूचकवाडा (वाव -थराद)",
+    name:"नवचेतना चेरिटेबल ट्रस्ट डूचकवाडा",
     cityState:"गुजरात-राजस्थान",
     address:"ऑफिस: डुचकवाड़ा, ताः दियोदर, जी: वाव-थराद",
     contact:"9737028137 / 9974328474 / 9974900247",

@@ -282,9 +282,7 @@ const styles = StyleSheet.create({
   },
 });
 
-const CertificateComServerSide = ({data,selectedProgram}) => (
-  <Document>
-    <Page size={{ width: '210mm', height: '148mm' }} style={styles.page}>
+const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm', height: '148mm' }} style={styles.page}>
    
         <View style={styles.outerBorder}>
            <Image src={TrsutData.frameImg} style={{
@@ -328,7 +326,7 @@ const CertificateComServerSide = ({data,selectedProgram}) => (
         
           </View> */}
        <View style={{
-        height:133,
+        height:110,
         width:'100%',
        }}>
 
@@ -447,20 +445,33 @@ const CertificateComServerSide = ({data,selectedProgram}) => (
             {/* Left Side - Karyakarta */}
             <View style={styles.leftFooter}>
               <Text style={styles.footerValue}>{data?.addedByName || '---'} ({data.agentPhone})</Text>
-              <Text style={styles.footerLabel}>प्रतिनिधि </Text>
+              <Text style={styles.footerLabel}>कार्यकर्ता </Text>
             </View>
 
             {/* Right Side - Signature */}
             <View style={styles.rightFooter}>
-              <Text style={styles.footerValue}>{TrsutData.trustPresident}</Text>
-              <Text style={styles.footerLabel}>निर्देशक</Text>
+              <Text style={styles.footerValue}>{TrsutData.name}</Text>
+              <Text style={styles.footerLabel}>संस्थापक</Text>
               {/* <Text style={styles.signatureText}>हस्ताक्षर</Text> */}
             </View>
           </View>
         </View>
       </View>
-    </Page>
+    </Page>)
+
+const CertificateComServerSide = ({data,selectedProgram}) => {
+    const membersArray = Array.isArray(data) ? data : [data];
+  return(
+  <Document>
+ {membersArray.map((member, index) => (
+        <Certificate 
+          key={member?.id || member?.registrationNumber || index}
+          data={member}
+          selectedProgram={selectedProgram}
+          index={index}
+        />
+      ))}
   </Document>
-);
+);}
 
 export default CertificateComServerSide;
