@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
     // alignItems: 'flex-end',
     // marginTop: 'auto',
     paddingHorizontal: 10,
-    paddingTop: 0,
+    paddingTop: 5,
   },
   leftFooter: {
     flexDirection: 'column',
