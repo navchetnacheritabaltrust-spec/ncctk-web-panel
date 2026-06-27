@@ -1,0 +1,41 @@
+{
+  "name": "trust-test",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@react-pdf/renderer": "^4.3.1",
+    "@reduxjs/toolkit": "^2.10.2",
+    "@tanstack/react-query": "^5.90.8",
+    "@tanstack/react-query-devtools": "^5.90.2",
+    "ag-grid-community": "^34.3.1",
+    "ag-grid-react": "^34.3.1",
+    "antd": "^5.28.1",
+    "antd-img-crop": "^4.27.0",
+    "firebase": "^12.6.0",
+    "firebase-admin": "^13.6.0",
+    "google-auth-library": "^10.5.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^3.0.4",
+    "jspdf-autotable": "^5.0.2",
+    "moment": "^2.30.1",
+    "next": "^15.5.7",
+    "nodemailer": "^7.0.10",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-icons": "^5.5.0",
+    "react-redux": "^9.2.0",
+    "svg2pdf.js": "^2.6.0",
+    "ua-parser-js": "^2.0.6",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "tailwindcss": "^4.0.0"
+  }
+}
