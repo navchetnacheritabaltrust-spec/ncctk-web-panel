@@ -445,7 +445,7 @@ const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm',
             {/* Left Side - Karyakarta */}
             <View style={styles.leftFooter}>
               <Text style={styles.footerValue}>{data?.addedByName || '---'} ({data.agentPhone})</Text>
-              <Text style={styles.footerLabel}>कार्यकर्ता </Text>
+              <Text style={styles.footerLabel}>कार्यकर्ता {data.agentCode?` (${data?.agentCode})`:null} </Text>
             </View>
 
             {/* Right Side - Signature */}
