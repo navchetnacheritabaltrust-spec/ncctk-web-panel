@@ -25,6 +25,7 @@ import { db, storage } from '@/lib/firebase';
 import { uploadFile } from '@/lib/services/storageService';
 import { useAuth } from '@/lib/AuthProvider';
 import { deleteObject, ref } from 'firebase/storage';
+import { checkApplicationNoExists } from '@/lib/helper';
 import { districtsByState, gender, states } from '@/lib/staticData';
 
 const { Option } = Select;
@@ -233,6 +234,7 @@ useEffect(() => {
       pinCode: memberData.pinCode,
       program: memberData.programId,
       ageGroup: memberData.ageGroup,
+      applicationNo: memberData.applicationNo,
       closingMonths: memberData.closingMonths || 0,
       locationGroup: selectedLocationGroup?.id || undefined,
       addedBy: memberData.addedBy || 'admin',
@@ -383,7 +385,22 @@ const handleDateOfBirthChange = (date) => {
   // Form submission
   const onFinish = async (values) => {
     setLoading(true);
-console.log(values,'values')
+
+    // Validate applicationNo uniqueness if changed
+    if (values.applicationNo && Number(values.applicationNo) !== Number(memberData.applicationNo)) {
+      const memberCollectionPath = `/users/${user.uid}/programs/${programId}/members`;
+      const exists = await checkApplicationNoExists(memberCollectionPath, values.applicationNo, memberData.id);
+      if (exists) {
+        form.setFields([{
+          name: 'applicationNo',
+          errors: [`आवेदन संख्या ${values.applicationNo} पहले से मौजूद है`],
+        }]);
+        message.error(`आवेदन संख्या ${values.applicationNo} पहले से इस कार्यक्रम में मौजूद है`);
+        setLoading(false);
+        return;
+      }
+    }
+
     try {
       const updatedData = { ...memberData };
 
@@ -490,6 +507,7 @@ console.log(values,'values')
         addedBy: values.addedBy,
         addedByName: values.addedBy === 'agent' ? agentName : 'Admin',
         agentId: values.addedBy === 'agent' ? values.selectedAgent : null,
+        applicationNo: values.applicationNo ? Number(values.applicationNo) : memberData.applicationNo,
         extraDetails: extraFields.filter(f => f.label && f.value),
         updatedAt: new Date(),
       };
@@ -769,6 +787,23 @@ console.log(values,'values')
                   />
                 </Form.Item>
               </Col>
+              <Col span={8}>
+                <Form.Item
+                  name="applicationNo"
+                  label="आवेदन संख्या (Application No.)"
+                  rules={[
+                    {
+                      pattern: /^\d+$/,
+                      message: 'केवल संख्या दर्ज करें'
+                    }
+                  ]}
+                >
+                  <Input prefix={<IdcardOutlined />} />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
               <Col span={8}>
                 <Form.Item
                   name="bobDate"

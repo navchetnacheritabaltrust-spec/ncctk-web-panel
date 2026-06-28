@@ -295,7 +295,7 @@ function MemberDetailsView({isModalVisible, handleCloseModal, showDeleteConfirm,
                 <div className='flex-grow'>
                   <Descriptions layout="vertical" bordered column={2} size='small'>
                     <Descriptions.Item label="Application Number">
-                      <Badge status="processing" text={selectedMember.applicationNumber || '-'} />
+                      <Badge status="processing" text={selectedMember.applicationNo || '-'} />
                     </Descriptions.Item>
                     <Descriptions.Item label="Registration Number">{selectedMember.registrationNumber}</Descriptions.Item>
                     <Descriptions.Item label="Name">{selectedMember.displayName}</Descriptions.Item>
@@ -558,7 +558,7 @@ function MemberDetailsView({isModalVisible, handleCloseModal, showDeleteConfirm,
                       <Text strong>Identity Summary</Text>
                     </div>
                     <div className="space-y-1">
-                      <div>🔢 Application Number: <strong>{selectedMember.applicationNumber || '-'}</strong></div>
+                      <div>🔢 Application Number: <strong>{selectedMember.applicationNo || '-'}</strong></div>
                       <div>🆔 Registration Number: <strong>{selectedMember.registrationNumber}</strong></div>
                       <div>👤 Aadhaar: {selectedMember.aadhaarNo ? '✓ Verified' : '✗ Not provided'}</div>
                       <div>👥 Guardian Aadhaar: {selectedMember.guardianAadharNo ? '✓ Provided' : '✗ Not provided'}</div>

@@ -356,7 +356,7 @@ const LoginPage = () => {
           <div style={{ width: '100%' }}>
             {[
               { icon: <IconPin />, text: <span>{TrsutData.address} </span> },
-              { icon: <IconPhone />, text: <span><strong style={{ color: '#2a1a0a' }}></strong> / <strong style={{ color: '#2a1a0a' }}>9320387645 / 9725823111 / 9076970217</strong> </span> },
+              { icon: <IconPhone />, text: <span><strong style={{ color: '#2a1a0a' }}></strong> / <strong style={{ color: '#2a1a0a' }}>{TrsutData.contact}</strong> </span> },
               { icon: <IconPerson />, text: <span>अध्यक्ष: <strong style={{ color: '#2a1a0a' }}>{TrsutData.trustPresident}</strong></span> },
             ].map((row, i) => (
               <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: '#6b5a3e', lineHeight: 1.5, marginBottom: 8 }}>

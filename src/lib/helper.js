@@ -84,6 +84,14 @@ export async function createMemberInTransaction(
         // Calculate new member number
         const currentMemberCount = programDoc.data().memberCount || 0;
         const newMemberCount = currentMemberCount + 1;
+
+        // Generate application number (per-program, starts at 10001)
+        const currentAppCounter = programDoc.data().applicationCounter || 10000;
+        // Auto-generate only if not provided manually; advance counter past any manual entry
+        const newApplicationNo = memberData.applicationNo
+            ? Number(memberData.applicationNo)
+            : currentAppCounter + 1;
+        const newAppCounter = Math.max(newApplicationNo, currentAppCounter + 1);
         
         // Generate registration number
         const newRegistrationNumber = 'R' + generate6DigitRegNo();
@@ -93,15 +101,17 @@ export async function createMemberInTransaction(
             ...memberData,
             registrationNumber: newRegistrationNumber,
             memberNumber: newMemberCount,
+            applicationNo: newApplicationNo,
         };
 
         // **********************************************
         // 3. ALL WRITES
         // **********************************************
 
-        // Update program document counter
+        // Update program document counters
         transaction.update(programDocRef, {
-            memberCount: newMemberCount
+            memberCount: newMemberCount,
+            applicationCounter: newAppCounter,
         });
 
         // Update agent document program-specific counter
@@ -130,6 +140,51 @@ export async function createMemberInTransaction(
         };
     });
 }
+
+/**
+ * Generate the next application number for a program (starts at 10001, per-program counter)
+ * @param {string} programDocPath - Full path to the program document
+ * @returns {Promise<number>} - The next application number
+ */
+export async function generateApplicationNumber(programDocPath) {
+    const programDocRef = doc(db, programDocPath);
+    return await runTransaction(db, async (transaction) => {
+        const programDoc = await transaction.get(programDocRef);
+        if (!programDoc.exists()) {
+            throw new Error("Program Document does not exist!");
+        }
+        const currentCounter = programDoc.data().applicationCounter || 10000;
+        const newAppNo = currentCounter + 1;
+        transaction.update(programDocRef, { applicationCounter: newAppNo });
+        return newAppNo;
+    });
+}
+
+/**
+ * Check if application number already exists in a program (uniqueness check)
+ * @param {string} memberCollectionPath
+ * @param {number|string} applicationNo
+ * @param {string} [excludeMemberId] - Optional member ID to exclude (for edits)
+ * @returns {Promise<boolean>}
+ */
+export const checkApplicationNoExists = async (memberCollectionPath, applicationNo, excludeMemberId) => {
+    try {
+        const membersRef = collection(db, memberCollectionPath);
+        const q = query(
+            membersRef,
+            where('applicationNo', '==', Number(applicationNo)),
+            where('delete_flag', '==', false)
+        );
+        const querySnapshot = await getDocs(q);
+        if (excludeMemberId) {
+            return querySnapshot.docs.some(doc => doc.id !== excludeMemberId);
+        }
+        return !querySnapshot.empty;
+    } catch (error) {
+        console.error('Error checking application number:', error);
+        throw error;
+    }
+};
 
 /**
  * Check if Aadhaar number already exists in a specific program
@@ -245,6 +300,13 @@ export async function acceptMemberWithCounterUpdate(
         const currentMemberCount = programDoc.data().memberCount || 0;
         const newMemberCount = parseInt(currentMemberCount) + 1;
 
+        // Generate application number (per-program, starts at 10001)
+        const currentAppCounter = programDoc.data().applicationCounter || 10000;
+        const newApplicationNo = memberData.applicationNo
+            ? Number(memberData.applicationNo)
+            : currentAppCounter + 1;
+        const newAppCounter = Math.max(newApplicationNo, currentAppCounter + 1);
+
         // Generate registration number
         const newRegistrationNumber = 'R' + generate6DigitRegNo();
 
@@ -253,18 +315,20 @@ export async function acceptMemberWithCounterUpdate(
             ...memberData,
             registrationNumber: newRegistrationNumber,
             memberNumber: newMemberCount,
-            acceptedAt: new Date().toISOString(), // Optional: add acceptance timestamp
-            status: 'accepted' // Optional: update status
+            applicationNo: newApplicationNo,
+            acceptedAt: new Date().toISOString(),
+            status: 'accepted'
         };
 
         // **********************************************
         // 3. PERFORM ALL WRITES
         // **********************************************
         
-        // 3a. Update program member count
+        // 3a. Update program member count and application counter
         transaction.update(programDocRef, {
             memberCount: newMemberCount,
-            updatedAt: new Date().toISOString() // Optional: update timestamp
+            applicationCounter: newAppCounter,
+            updatedAt: new Date().toISOString()
         });
 
         // 3b. Update agent program-specific counter if agent exists
