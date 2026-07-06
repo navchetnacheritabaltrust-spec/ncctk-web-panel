@@ -280,6 +280,11 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     marginLeft: 2,
   },
+    remarkBox:{
+    position: 'absolute',
+    bottom: 115,
+    right: 13,
+  }
 });
 
 const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm', height: '148mm' }} style={styles.page}>
@@ -341,6 +346,15 @@ const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm',
               </View>
             )}
           </View>
+          {data.joinFees > 0 && (
+  <View style={styles.remarkBox}>
+      <View style={[styles.fieldGroup, { marginLeft: 20,marginRight:40 }]}>
+                <Text style={styles.label}>सदस्यता शुल्क:</Text>
+                <Text style={[styles.value, { minWidth: 60 }]}>₹{data?.joinFees || '---'}</Text>
+              </View>
+
+  </View>
+)}
          <View style={styles.schemeBox}>
                 <Text style={styles.schemeText}>{selectedProgram?.hiname}</Text>
               </View>
@@ -422,9 +436,9 @@ const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm',
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>प्रत्येक {selectedProgram?.isSuraksha?'देहांत':selectedProgram?.isMamera?"मायरा":'विवाह'} पर सहयोग राशि:</Text>
                 <Text style={[styles.value, { minWidth: 70}]}>
-                  {data?.payAmount || '0'}/-
+                 ₹ {data?.payAmount || '0'}/-
                 </Text>
-                <Text style={styles.label}>रुपये</Text>
+                {/* <Text style={styles.label}>रुपये</Text> */}
               </View>
             </View>
           </View>
