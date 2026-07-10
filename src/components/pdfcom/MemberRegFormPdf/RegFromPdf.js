@@ -531,7 +531,7 @@ const RegFormPdf = ({data, selectedProgram}) => {
 
               {/* Organization */}
               <View style={styles.footerBox}>
-                <Text style={styles.footerValue}>{TrsutData.trustPresident}</Text>
+                <Text style={styles.footerValue}>{TrsutData.name}</Text>
                 <Text style={styles.footerLabel}>संस्थापक</Text>
               </View>
             </View>
