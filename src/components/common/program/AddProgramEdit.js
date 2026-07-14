@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Drawer, Form, Input, InputNumber, Select, Space, Card, Typography, App, Radio, message } from 'antd';
-import { FiPlusCircle, FiTrash2, FiUser, FiMapPin, FiDollarSign, FiCalendar, FiTag, FiEdit2, FiSave } from 'react-icons/fi';
+import { Button, Drawer, Form, Input, InputNumber, Select, Space, Card, Typography, App, Radio, Modal } from 'antd';
+import { FiPlusCircle, FiTrash2, FiUser, FiMapPin, FiDollarSign, FiCalendar, FiTag, FiEdit2, FiSave, FiAlertTriangle } from 'react-icons/fi';
 import { useAuth } from '@/lib/AuthProvider';
-import { collection, addDoc, updateDoc, doc } from "firebase/firestore";
+import { collection, addDoc, updateDoc, doc, query, where, getDocs, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { setgetMemberDataChange, setPrograms } from '@/redux/slices/commonSlice';
 import { useDispatch, useSelector } from 'react-redux';
@@ -16,6 +16,11 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [isSelected, setIsSelected] = useState(false);
+  const [oldAgeGroups, setOldAgeGroups] = useState([]);
+  const [updateMembersModalVisible, setUpdateMembersModalVisible] = useState(false);
+  const [changedAgeGroups, setChangedAgeGroups] = useState([]);
+  const [isUpdatingMembers, setIsUpdatingMembers] = useState(false);
+  const [pendingFormValues, setPendingFormValues] = useState(null);
   const dispatch=useDispatch()
   const programList = useSelector((state) => state.data.programList);
 
@@ -35,6 +40,9 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
   // Initialize form with program data when in edit mode
   useEffect(() => {
     if (mode === 'edit' && program && isDrawerOpen) {
+      // Store deep copy of old age groups for change detection
+      setOldAgeGroups(JSON.parse(JSON.stringify(program.ageGroups || [])));
+      
       // Set isSelected from program data (default to false if not exists)
       setIsSelected(program.isSelected || false);
       
@@ -61,120 +69,186 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     } else if (mode === 'add' && isDrawerOpen) {
       // Reset form for add mode
       setIsSelected(false);
+      setOldAgeGroups([]);
       form.resetFields();
     }
   }, [mode, program, isDrawerOpen, form]);
+
+  // Detect which age groups had fee changes
+  const getChangedAgeGroups = (newGroups, oldGroups) => {
+    const changed = [];
+    for (const newGroup of newGroups) {
+      const oldGroup = oldGroups.find(g => g.id === newGroup.id);
+      if (oldGroup) {
+        const joinFeeChanged = Number(newGroup.joinFee) !== Number(oldGroup.joinFee);
+        const payAmountChanged = Number(newGroup.payAmount) !== Number(oldGroup.payAmount);
+        if (joinFeeChanged || payAmountChanged) {
+          changed.push({
+            ...newGroup,
+            oldJoinFee: oldGroup.joinFee,
+            oldPayAmount: oldGroup.payAmount,
+          });
+        }
+      }
+    }
+    return changed;
+  };
+
+  // Batch update all members with matching ageGroup ID
+  const updateMembersForAgeGroups = async (userUid, programId, groups) => {
+    setIsUpdatingMembers(true);
+    try {
+      const membersRef = collection(db, `users/${userUid}/programs/${programId}/members`);
+      let totalUpdated = 0;
+
+      for (const group of groups) {
+        const q = query(
+          membersRef,
+          where('ageGroup', '==', group.id),
+          where('delete_flag', '==', false)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) continue;
+
+        const batch = writeBatch(db);
+        snapshot.forEach(docSnap => {
+          batch.update(docSnap.ref, {
+            joinFees: Number(group.joinFee),
+            payAmount: Number(group.payAmount),
+            ageGroupRange: `${group.startAge}-${group.endAge}`,
+            updatedAt: new Date(),
+          });
+        });
+        await batch.commit();
+        totalUpdated += snapshot.size;
+      }
+      return totalUpdated;
+    } catch (error) {
+      console.error('Error updating members:', error);
+      throw error;
+    } finally {
+      setIsUpdatingMembers(false);
+    }
+  };
 
   const handleSubmit = async (values) => {
     if (!user?.uid) {
       antdMessage.error("User not authenticated!");
       return;
     }
-    
+
+    // In edit mode, detect changed age groups before saving
+    if (mode === 'edit' && program?.id && oldAgeGroups.length > 0) {
+      const newAgeGroups = (values.ageGroups || []).map(group => ({
+        ...group,
+        id: group.id || crypto.randomUUID?.() || Math.random().toString(36).slice(2)
+      }));
+      const changed = getChangedAgeGroups(newAgeGroups, oldAgeGroups);
+      if (changed.length > 0) {
+        setChangedAgeGroups(changed);
+        setPendingFormValues(values);
+        setUpdateMembersModalVisible(true);
+        return; // Wait for user confirmation
+      }
+    }
+
+    // No age group changes or add mode — save directly
+    await saveProgram(values);
+  };
+
+  const saveProgram = async (values) => {
     setLoading(true);
     try {
-      // Add unique id to each age group and location group if not exists
       const ageGroupsWithId = (values.ageGroups || []).map(group => ({
         ...group,
-        id: group.id || (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2)
+        id: group.id || crypto.randomUUID?.() || Math.random().toString(36).slice(2)
       }));
       
       const locationGroupsWithId = (values.locationGroups || []).map(group => ({
         ...group,
-        id: group.id || (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2)
+        id: group.id || crypto.randomUUID?.() || Math.random().toString(36).slice(2)
       }));
 
-      // Create category flags based on selected category
       const categoryFlags = {
-        isSuraksha: false,
-        isMamera: false,
-        isVivah: false,
-        isOther: false,
+        isSuraksha: false, isMamera: false, isVivah: false, isOther: false,
       };
-      
-      // Set the selected category to true
-      if (values.category) {
-        categoryFlags[values.category] = true;
-      }
+      if (values.category) categoryFlags[values.category] = true;
 
       if (mode === 'add') {
         const programsRef = collection(db, "users", user.uid, "programs");
         await addDoc(programsRef, {
-          name: values.name,
-          hiname: values.hiname,
-          guname: values.guname || "",
-          noteLine: values.noteLine || '',
-          about: values.about,
-          ...categoryFlags,
-          isSelected: isSelected,
-          ageGroups: ageGroupsWithId,
-          memberCount:values?.memberCount,
-          inactivemembercount:values?.inactivemembercount,
+          name: values.name, hiname: values.hiname, guname: values.guname || "",
+          noteLine: values.noteLine || '', about: values.about,
+          ...categoryFlags, isSelected: isSelected,
+          ageGroups: ageGroupsWithId, memberCount: values?.memberCount,
+          inactivemembercount: values?.inactivemembercount,
           locationGroups: locationGroupsWithId,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          createdBy: user.uid,
+          createdAt: new Date(), updatedAt: new Date(), createdBy: user.uid,
         });
-        
         antdMessage.success('Program created successfully!');
       } else if (mode === 'edit' && program?.id) {
         const programRef = doc(db, "users", user.uid, "programs", program.id);
         await updateDoc(programRef, {
-          name: values.name,
-          hiname: values.hiname,
-          guname: values.guname || "",
-          noteLine: values.noteLine || '',
-          about: values.about,
-          ...categoryFlags,
-          isSelected: isSelected,
-            memberCount:parseInt(values?.memberCount) || 0,
-          inactivemembercount:parseInt(values?.inactivemembercount) || 0,
-          ageGroups: ageGroupsWithId,
-          locationGroups: locationGroupsWithId,
+          name: values.name, hiname: values.hiname, guname: values.guname || "",
+          noteLine: values.noteLine || '', about: values.about,
+          ...categoryFlags, isSelected: isSelected,
+          memberCount: parseInt(values?.memberCount) || 0,
+          inactivemembercount: parseInt(values?.inactivemembercount) || 0,
+          ageGroups: ageGroupsWithId, locationGroups: locationGroupsWithId,
           updatedAt: new Date(),
         });
-        
         antdMessage.success('Program updated successfully!');
-          const programs=programList.map((item)=>{
-        if(item.id ===program.id){
-          return {
-            ...item,
-            memberCount:values?.memberCount,
-                 name: values.name,
-          hiname: values.hiname,
-          guname:values.guname,
-          noteLine: values.noteLine || '',
-          about: values.about,
-          ...categoryFlags,
-          isSelected: isSelected,
-            memberCount:values?.memberCount,
-              inactivemembercount:values?.inactivemembercount,
-          ageGroups: ageGroupsWithId,
-          locationGroups: locationGroupsWithId,
-          updatedAt: new Date(),
+
+        const programs = programList.map(item => {
+          if (item.id === program.id) {
+            return {
+              ...item, memberCount: values?.memberCount,
+              name: values.name, hiname: values.hiname, guname: values.guname,
+              noteLine: values.noteLine || '', about: values.about,
+              ...categoryFlags, isSelected: isSelected,
+              memberCount: values?.memberCount,
+              inactivemembercount: values?.inactivemembercount,
+              ageGroups: ageGroupsWithId, locationGroups: locationGroupsWithId,
+              updatedAt: new Date(),
+            };
           }
-        }else{
-          return item
-        }
-      })
-      dispatch(setPrograms(programs))
+          return item;
+        });
+        dispatch(setPrograms(programs));
       }
-      
-    
- 
-      
-      // Call success callback if provided
-      if (onSuccess) {
-        onSuccess();
-      }
+
+      if (onSuccess) onSuccess();
       dispatch(setgetMemberDataChange(true));
       form.resetFields();
+      setOldAgeGroups([]);
       setIsDrawerOpen(false);
     } catch (error) {
       console.error(`Error ${mode === 'add' ? 'adding' : 'updating'} program:`, error);
       antdMessage.error(`Failed to ${mode === 'add' ? 'create' : 'update'} program.`);
     }
     setLoading(false);
+  };
+
+  // Handle user response to the update members modal
+  const handleUpdateMembersResponse = async (shouldUpdate) => {
+    setUpdateMembersModalVisible(false);
+    if (shouldUpdate && pendingFormValues) {
+      // First save the program, then update members
+      await saveProgram(pendingFormValues);
+      if (program?.id) {
+        const updated = await updateMembersForAgeGroups(user.uid, program.id, changedAgeGroups);
+        if (updated > 0) {
+          antdMessage.success(`${updated} members updated with new fee details`);
+        }
+        dispatch(setgetMemberDataChange(true));
+      }
+    } else {
+      // Just save without updating members
+      await saveProgram(pendingFormValues);
+    }
+    setPendingFormValues(null);
+    setChangedAgeGroups([]);
   };
 
   const AgeGroupCard = ({ field, remove }) => (
@@ -576,6 +650,66 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
           </div>
         </Form>
       </Drawer>
+      {/* Confirmation Modal for Updating Members */}
+      <Modal
+        title={
+          <div className="flex items-center gap-2">
+            <FiAlertTriangle className="text-amber-500 text-xl" />
+            <span>Age Group Fees Changed</span>
+          </div>
+        }
+        open={updateMembersModalVisible}
+        onCancel={() => handleUpdateMembersResponse(false)}
+        width={600}
+        footer={[
+          <Button key="skip" onClick={() => handleUpdateMembersResponse(false)} disabled={isUpdatingMembers}>
+            No, Skip Member Update
+          </Button>,
+          <Button
+            key="update"
+            type="primary"
+            loading={isUpdatingMembers}
+            onClick={() => handleUpdateMembersResponse(true)}
+            className="bg-amber-500 hover:bg-amber-600 border-amber-500"
+          >
+            Yes, Update All Members
+          </Button>,
+        ]}
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">
+            The following age groups have changes in <strong>Joining Fee</strong> or <strong>Pay Amount</strong>.
+            Would you like to update all existing members in these age groups?
+          </p>
+          {changedAgeGroups.map((group, idx) => (
+            <Card key={idx} size="small" className="border-l-4 border-l-amber-400">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <span className="text-gray-500">Age Group:</span>
+                  <span className="ml-2 font-semibold">{group.startAge}-{group.endAge} yrs</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Group ID:</span>
+                  <span className="ml-2 font-mono text-xs">{group.id}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Join Fee:</span>
+                  <span className="ml-2 line-through text-red-500">₹{group.oldJoinFee}</span>
+                  <span className="ml-2 text-green-600 font-semibold">→ ₹{group.joinFee}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Pay Amount:</span>
+                  <span className="ml-2 line-through text-red-500">₹{group.oldPayAmount}</span>
+                  <span className="ml-2 text-green-600 font-semibold">→ ₹{group.payAmount}</span>
+                </div>
+              </div>
+            </Card>
+          ))}
+          <p className="text-xs text-gray-400">
+            Members updated: <code>payAmount</code>, <code>joinFees</code>, and <code>ageGroupRange</code> will be synced.
+          </p>
+        </div>
+      </Modal>
     </>
   );
 };
