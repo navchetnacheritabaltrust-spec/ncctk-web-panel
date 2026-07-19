@@ -649,27 +649,27 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
         agentIdToUpdate
       );
 
-      try {
-  await createMemberAccount({
-    memberId: result.id,
-    displayName: values.displayName,
-    photoURL: fileUrls.photo?.url || "",
-    password: generateMemberPassword(values.displayName, values.bobDate.format('DD-MM-YYYY')) || "Member@123", // optional
-    programId: values.program,
-    registrationNumber: result.registrationNumber,
-    memberCollectionPath: memberCollectionPath,
-    createdBy: user.uid
-  });
+//       try {
+//   await createMemberAccount({
+//     memberId: result.id,
+//     displayName: values.displayName,
+//     photoURL: fileUrls.photo?.url || "",
+//     password: generateMemberPassword(values.displayName, values.bobDate.format('DD-MM-YYYY')) || "Member@123", // optional
+//     programId: values.program,
+//     registrationNumber: result.registrationNumber,
+//     memberCollectionPath: memberCollectionPath,
+//     createdBy: user.uid
+//   });
 
-  console.log("Member auth created");
-} catch (authError) {
-  console.error("Auth creation failed:", authError);
+//   console.log("Member auth created");
+// } catch (authError) {
+//   console.error("Auth creation failed:", authError);
 
-  // optional rollback warning only
-  message.warning(
-    "Member added successfully, but login account creation failed."
-  );
-}
+//   // optional rollback warning only
+//   message.warning(
+//     "Member added successfully, but login account creation failed."
+//   );
+// }
 
       const agentToken = getAgentToken(agentIdToUpdate);
 

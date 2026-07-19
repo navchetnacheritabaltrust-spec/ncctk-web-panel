@@ -162,7 +162,7 @@ const styles = StyleSheet.create({
   memberIdBox: {
     position: 'absolute',
     right: 40,
-    top: 150,
+    top: 160,
     border: '2px solid #333',
     width: 80,
     height: 80,
@@ -290,7 +290,7 @@ const styles = StyleSheet.create({
 const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm', height: '148mm' }} style={styles.page}>
    
         <View style={styles.outerBorder}>
-           <Image src={TrsutData.frameImg} style={{
+           <Image src={selectedProgram.isMamera ? TrsutData.MameraCertificateImg : TrsutData.frameImg} style={{
       position: 'absolute',
       top: 0,
       left: 0,
@@ -305,7 +305,7 @@ const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm',
 
           {/* Watermark */}
           <Image 
-           src={TrsutData.logo}
+           src={selectedProgram.isMamera?TrsutData.mameraLogo:TrsutData.logo}
             style={styles.watermark}
           />
 
@@ -331,7 +331,7 @@ const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm',
         
           </View> */}
        <View style={{
-        height:110,
+        height:selectedProgram.isMamera?150:110,
         width:'100%',
        }}>
 
@@ -355,9 +355,15 @@ const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm',
 
   </View>
 )}
-         <View style={styles.schemeBox}>
+{
+  !selectedProgram.isMamera ?    <View style={styles.schemeBox}>
                 <Text style={styles.schemeText}>{selectedProgram?.hiname}</Text>
-              </View>
+              </View>:<View styles={{
+                  paddingVertical: 3,
+    paddingHorizontal: 14,
+              }}></View>
+}
+     
           {/* Form Section */}
           <View style={styles.formSection}>
             {/* Row 1 */}

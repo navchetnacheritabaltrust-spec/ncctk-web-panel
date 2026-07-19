@@ -1,6 +1,8 @@
 import certificateImg from "@/app/api/helperfile/Images/CertificateImg";
 import headerImg from "@/app/api/helperfile/Images/headerImg";
 import logo from "@/app/api/helperfile/Images/logo";
+import MameraCertificateImg from "@/app/api/helperfile/Images/MameraCertificateImg";
+import MameraLogo from "@/app/api/helperfile/Images/mameraLogo";
 import semkariLogo from "@/app/api/helperfile/Images/semkariLogo";
 
 export const TrsutData={
@@ -11,10 +13,12 @@ export const TrsutData={
     contactPerson:"किरण एच. मोदी",
     trustPresident:"दिनेश एम मोदी,ईश्वरभाई आर पटेल",
     frameImg:certificateImg,
+    MameraCertificateImg:MameraCertificateImg,
     email:"",
     website:"",
     regNo:"F/7218/बनासकांठा",
     logo:logo,
+    mameraLogo:MameraLogo,
     RightLogo:null,
     headerImg:headerImg,
     topTitle:[

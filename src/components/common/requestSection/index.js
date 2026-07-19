@@ -227,23 +227,23 @@ const showAcceptModal = (member) => {
         currentMember.addedBy === 'agent' ? currentMember.agentId : null
       );
       
-      try {
-        await createMemberAccount({
-          memberId: result.id,
-          displayName: currentMember.displayName,
-          photoURL: currentMember.photoURL || "",
-          password: generateMemberPassword(currentMember.displayName, currentMember.bobDate) || "Member@123",
-          programId: currentMember.programId,
-          registrationNumber: result.registrationNumber,
-          memberCollectionPath: memberCollectionPath,
-          createdBy: user.uid
-        });
+      // try {
+      //   await createMemberAccount({
+      //     memberId: result.id,
+      //     displayName: currentMember.displayName,
+      //     photoURL: currentMember.photoURL || "",
+      //     password: generateMemberPassword(currentMember.displayName, currentMember.bobDate) || "Member@123",
+      //     programId: currentMember.programId,
+      //     registrationNumber: result.registrationNumber,
+      //     memberCollectionPath: memberCollectionPath,
+      //     createdBy: user.uid
+      //   });
       
-        console.log("Member auth created");
-      } catch (authError) {
-        console.error("Auth creation failed:", authError);
-        message.warning("Member added successfully, but login account creation failed.");
-      }
+      //   console.log("Member auth created");
+      // } catch (authError) {
+      //   console.error("Auth creation failed:", authError);
+      //   message.warning("Member added successfully, but login account creation failed.");
+      // }
       
       dispatch(setgetMemberDataChange(true));
       
@@ -891,30 +891,28 @@ ${values.joinFeesDone ? `Join Fees: ₹${joinFeesPaidAmount}` : 'Join Fees: Pend
         <Modal
           title="Reject Member Request"
           open={rejectModalVisible}
-          onCancel={() => setRejectModalVisible(false)}
-      footer={[
-  <Button key="cancel" onClick={() => {
-    setAcceptModalVisible(false);
-    setJoinFeesPaymentType(null);
-    setCustomJoinFeesAmount(1100);  // Change from 0 to 1100
-    acceptForm.resetFields();
-    acceptForm.setFieldsValue({
-      customJoinFeesAmount: 1100    // Add this to reset to 1100
-    });
-  }}>
-    Cancel
-  </Button>,
-  <Button 
-    key="accept" 
-    type="primary" 
-    loading={acceptLoading}
-    onClick={handleAccept}
-    icon={<FiCheck />}
-    style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
-  >
-    Accept Member
-  </Button>
-]}
+          onCancel={() => {
+            setRejectModalVisible(false);
+            rejectForm.resetFields();
+          }}
+          footer={[
+            <Button key="cancel" onClick={() => {
+              setRejectModalVisible(false);
+              rejectForm.resetFields();
+            }}>
+              Cancel
+            </Button>,
+            <Button
+              key="reject"
+              danger
+              type="primary"
+              loading={rejectLoading}
+              onClick={handleReject}
+              icon={<FiX />}
+            >
+              Reject Member
+            </Button>
+          ]}
         >
           <Form form={rejectForm} layout="vertical">
             <Form.Item
