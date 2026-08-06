@@ -284,7 +284,12 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 115,
     right: 13,
-  }
+  },
+  OfferJoinfees:{
+  position:'absolute',
+  bottom:100,
+  right:100,
+}
 });
 
 const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm', height: '148mm' }} style={styles.page}>
@@ -425,12 +430,23 @@ const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm',
             <View style={styles.row}>
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>जिला:</Text>
-                <Text style={[styles.value, { minWidth: 160 }]}>{data?.district || '---'}</Text>
+                <Text style={[styles.value, { minWidth: 90 }]}>{data?.district || '---'}</Text>
               </View>
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>राज्य:</Text>
-                <Text style={[styles.value, { minWidth: 180 }]}>{data?.state || '---'}</Text>
+                <Text style={[styles.value, { minWidth: 100 }]}>{data?.state || '---'}</Text>
               </View>
+                  <View style={styles.fieldGroup}>
+                <Text style={styles.label}>जॉइन ऑफर:</Text>
+                <Text style={[styles.value, { minWidth: 110 }]}> {data?.joinInOffer === 'full'
+        ? 'Full (100%)'
+        : data?.joinInOffer === 'half'
+        ? 'Half (50%)'
+        : data?.joinInOffer === 'custom'
+        ? `₹ ${data?.joinInOfferCustomAmount || 0}`
+        : data?.joinInOffer || '-'}</Text>
+              </View>
+                 
             </View>
 
             {/* Row 6 */}
@@ -444,6 +460,7 @@ const Certificate=({data,selectedProgram}) => (    <Page size={{ width: '210mm',
                 <Text style={[styles.value, { minWidth: 70}]}>
                  ₹ {data?.payAmount || '0'}/-
                 </Text>
+              
                 {/* <Text style={styles.label}>रुपये</Text> */}
               </View>
             </View>

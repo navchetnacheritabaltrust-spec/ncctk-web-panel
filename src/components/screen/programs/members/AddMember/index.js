@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Button, Drawer, Select, Form, Input, DatePicker, Upload, Card, Row, Col, Divider, Space, Typography, App, Spin, Checkbox, Modal } from 'antd';
+import { Button, Drawer, Select, Form, Input, InputNumber, DatePicker, Upload, Card, Row, Col, Divider, Space, Typography, App, Spin, Checkbox, Modal } from 'antd';
 import {
   PlusOutlined,
   UserOutlined,
@@ -24,7 +24,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { createData, getData } from '@/lib/services/firebaseService';
 import { uploadFile } from '@/lib/services/storageService';
 import { useAuth } from '@/lib/AuthProvider';
-import { checkAadhaarExists, checkApplicationNoExists, createMemberInTransaction, generateUnique4Digit, sendFirebaseNotification } from '@/lib/helper';
+import { checkAadhaarExists, createMemberInTransaction, generateUnique4Digit, sendFirebaseNotification } from '@/lib/helper';
 import { districtsByState, gender, states } from '@/lib/staticData';
 import { setgetMemberDataChange } from '@/redux/slices/commonSlice';
 import { createMemberAccount, generateMemberPassword } from '@/lib/commonFun';
@@ -64,6 +64,7 @@ const AddMember = () => {
   const [extraFields, setExtraFields] = useState([]);
   const [joinFeesPaymentType, setJoinFeesPaymentType] = useState(null);
   const [customJoinFeesAmount, setCustomJoinFeesAmount] = useState(0);
+  const [joinInOffer, setJoinInOffer] = useState(null);
 
   // Indian states and districts
   const [districts, setDistricts] = useState([]);
@@ -453,26 +454,13 @@ const [closingDays, setClosingDays] = useState(null);
     
     const aadhaarNo = values.aadhaarNo;
     const programId = values.program;
-    const programDocPath = `/users/${user.uid}/programs/${programId}`;
-    const memberCollectionPath = programDocPath + '/members';
-
-    // If applicationNo is manually entered, validate uniqueness
-    if (values.applicationNo) {
-      const exists = await checkApplicationNoExists(memberCollectionPath, values.applicationNo);
-      if (exists) {
-        form.setFields([{
-          name: 'applicationNo',
-          errors: [`आवेदन संख्या ${values.applicationNo} पहले से मौजूद है`],
-        }]);
-        message.error(`आवेदन संख्या ${values.applicationNo} पहले से इस कार्यक्रम में मौजूद है`);
-        setLoading(false);
-        return;
-      }
-    }
     
     if (aadhaarNo && programId) {
       try {
         setIsAadhaarChecking(true);
+        const programDocPath = `/users/${user.uid}/programs/${programId}`;
+        const memberCollectionPath = programDocPath + '/members';
+        
         const isAadhaarExists = await checkAadhaarExists(memberCollectionPath, aadhaarNo);
         
         if (isAadhaarExists) {
@@ -588,6 +576,7 @@ const [closingDays, setClosingDays] = useState(null);
         phone: values.phone,
         phoneAlt: values.phoneAlt || '',
         aadhaarNo: values.aadhaarNo,
+        applicationNumber: values.applicationNumber || "",
         bobDate: values.bobDate.format('DD-MM-YYYY'),
         currentAddress: values.currentAddress,
         village: values.village,
@@ -605,10 +594,12 @@ const [closingDays, setClosingDays] = useState(null);
         locactionGroupId: selectedLocationGroup?.id || '',
         payAmount: payAmount,
         joinFees: joinFees,
-       joinFeesDone: values?.joinFeesDone || false,
+        joinFeesDone: values?.joinFeesDone || false,
 joinFeesTxtId: values?.joinFeesTxtId || "",
 joinFeesPaymentType: values?.joinFeesPaymentType || "",
-joinFeesPaidAmount: values?.joinFeesPaymentType === 'custom' 
+joinInOffer: values?.joinInOffer || "",
+joinInOfferCustomAmount: values?.joinInOffer === 'custom' ? (values?.joinInOfferCustomAmount || 0) : 0,
+joinFeesPaidAmount: values?.joinFeesPaymentType === 'custom'
   ? (values?.customJoinFeesAmount || 0) 
   : (values?.joinFeesPaymentType === 'full' ? joinFees : 0),
 joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.customJoinFeesAmount 
@@ -629,18 +620,14 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
         documentFrontURL: fileUrls.documentFront?.url || '',
         documentBackURL: fileUrls.documentBack?.url || '',
         guardianDocumentURL: fileUrls.guardianDocument?.url || '',
-        applicationNo: values.applicationNo ? Number(values.applicationNo) : undefined,
         extraDetails: extraFields.filter(f => f.label && f.value),
         createdAt: new Date(),
       };
 
-      // If applicationNo was left empty, remove it so the transaction auto-generates
-      if (!memberData.applicationNo) {
-        delete memberData.applicationNo;
-      }
-
       // Save to Firestore
       const agentIdToUpdate = values.addedBy === 'agent' ? values.selectedAgent : null;
+      const programDocPath = `/users/${user.uid}/programs/${values.program}`;
+      const memberCollectionPath = programDocPath + '/members';
 
       const result = await createMemberInTransaction(
         programDocPath,
@@ -649,27 +636,27 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
         agentIdToUpdate
       );
 
-//       try {
-//   await createMemberAccount({
-//     memberId: result.id,
-//     displayName: values.displayName,
-//     photoURL: fileUrls.photo?.url || "",
-//     password: generateMemberPassword(values.displayName, values.bobDate.format('DD-MM-YYYY')) || "Member@123", // optional
-//     programId: values.program,
-//     registrationNumber: result.registrationNumber,
-//     memberCollectionPath: memberCollectionPath,
-//     createdBy: user.uid
-//   });
+      try {
+  await createMemberAccount({
+    memberId: result.id,
+    displayName: values.displayName,
+    photoURL: fileUrls.photo?.url || "",
+    password: generateMemberPassword(values.displayName, values.bobDate.format('DD-MM-YYYY')) || "Member@123", // optional
+    programId: values.program,
+    registrationNumber: result.registrationNumber,
+    memberCollectionPath: memberCollectionPath,
+    createdBy: user.uid
+  });
 
-//   console.log("Member auth created");
-// } catch (authError) {
-//   console.error("Auth creation failed:", authError);
+  console.log("Member auth created");
+} catch (authError) {
+  console.error("Auth creation failed:", authError);
 
-//   // optional rollback warning only
-//   message.warning(
-//     "Member added successfully, but login account creation failed."
-//   );
-// }
+  // optional rollback warning only
+  message.warning(
+    "Member added successfully, but login account creation failed."
+  );
+}
 
       const agentToken = getAgentToken(agentIdToUpdate);
 
@@ -882,6 +869,11 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
 
                 <Row gutter={16}>
                   <Col span={8}>
+                    <Form.Item name="applicationNumber" label="Application Number">
+                      <Input placeholder="Optional" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
                     <Form.Item
                       name="displayName"
                       label="नाम"
@@ -1026,27 +1018,6 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
                       />
                     </Form.Item>
                   </Col>
-                  <Col span={8}>
-                    <Form.Item
-                      name="applicationNo"
-                      label="आवेदन संख्या (Application No.)"
-                      tooltip="खाली छोड़ें तो स्वचालित (10001 से शुरू) या मैन्युअल दर्ज करें"
-                      rules={[
-                        {
-                          pattern: /^\d+$/,
-                          message: 'केवल संख्या दर्ज करें'
-                        }
-                      ]}
-                    >
-                      <Input
-                        placeholder="खाली=ऑटो या मैन्युअल दर्ज करें (10001+)"
-                        prefix={<IdcardOutlined />}
-                      />
-                    </Form.Item>
-                  </Col>
-                </Row>
-
-                <Row gutter={16}>
                   <Col span={8}>
                     <Form.Item
                       name="bobDate"
@@ -1416,15 +1387,23 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
 <Divider orientation="left">नामांकन शुल्क</Divider>
 <Card size="small">
   <Row gutter={16}>
-    <Col span={24}>
+    <Col span={12}>
+      <Form.Item name="joinInOffer" label="Join In Offer (Initial Commitment)">
+        <Select placeholder="Select offer" onChange={setJoinInOffer}>
+          <Option value="full">Full (₹{joinFees})</Option>
+          <Option value="half">Half / 50% (₹{Math.round(joinFees / 2)})</Option>
+          <Option value="custom">Custom Amount</Option>
+        </Select>
+      </Form.Item>
+    </Col>
+    <Col span={12}>
       <Form.Item name="joinFeesDone" valuePropName="checked">
         <Checkbox onChange={(e) => {
           setIsJoinFeesDone(e.target.checked);
           if (!e.target.checked) {
-            // Reset payment type and custom amount when unchecked
             form.setFieldsValue({
               joinFeesPaymentType: undefined,
-              customJoinFeesAmount: undefined
+              customJoinFeesAmount: undefined,
             });
             setJoinFeesPaymentType(null);
             setCustomJoinFeesAmount(0);
@@ -1435,6 +1414,24 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
       </Form.Item>
     </Col>
   </Row>
+
+  {joinInOffer === 'custom' && (
+    <Row gutter={16} className="mt-2">
+      <Col span={12}>
+        <Form.Item
+          name="joinInOfferCustomAmount"
+          label="Join In Offer Custom Amount (₹)"
+          rules={[{ required: true, message: 'कृपया राशि दर्ज करें' }]}
+        >
+          <InputNumber
+            placeholder="Enter amount"
+            className="w-full"
+            min={1}
+          />
+        </Form.Item>
+      </Col>
+    </Row>
+  )}
 
   {isJoinFeesDone && (
     <>
@@ -1450,17 +1447,11 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
            onChange={(value) => {
   setJoinFeesPaymentType(value);
   if (value === 'full') {
-    // Set full amount when Full Paid is selected
     setCustomJoinFeesAmount(joinFees);
-    form.setFieldsValue({
-      customJoinFeesAmount: joinFees
-    });
+    form.setFieldsValue({ customJoinFeesAmount: joinFees });
   } else if (value === 'custom') {
-    // Set default amount 1100 when Custom is selected
     setCustomJoinFeesAmount(1100);
-    form.setFieldsValue({
-      customJoinFeesAmount: 1100
-    });
+    form.setFieldsValue({ customJoinFeesAmount: 1100 });
   }
 }}  
             >

@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Button, Drawer, Select, Form, Input, DatePicker, Upload, Card, Row, Col, Divider, Space, Typography, App, Spin, Checkbox } from 'antd';
+import { Button, Drawer, Select, Form, Input, InputNumber, DatePicker, Upload, Card, Row, Col, Divider, Space, Typography, App, Spin, Checkbox } from 'antd';
 import {
   EditOutlined,
   UserOutlined,
@@ -25,7 +25,6 @@ import { db, storage } from '@/lib/firebase';
 import { uploadFile } from '@/lib/services/storageService';
 import { useAuth } from '@/lib/AuthProvider';
 import { deleteObject, ref } from 'firebase/storage';
-import { checkApplicationNoExists } from '@/lib/helper';
 import { districtsByState, gender, states } from '@/lib/staticData';
 
 const { Option } = Select;
@@ -50,6 +49,7 @@ const EditMember = ({ memberData, programId, onSuccess, setOpen, open }) => {
   const [isJoinFeesDone, setIsJoinFeesDone] = useState(false);
   const [joinFeesPaymentType, setJoinFeesPaymentType] = useState(null);
   const [customJoinFeesAmount, setCustomJoinFeesAmount] = useState(0);
+  const [joinInOffer, setJoinInOffer] = useState(null);
 
   // Location group
   const [selectedLocationGroup, setSelectedLocationGroup] = useState(null);
@@ -234,14 +234,16 @@ useEffect(() => {
       pinCode: memberData.pinCode,
       program: memberData.programId,
       ageGroup: memberData.ageGroup,
-      applicationNo: memberData.applicationNo,
       closingMonths: memberData.closingMonths || 0,
       locationGroup: selectedLocationGroup?.id || undefined,
       addedBy: memberData.addedBy || 'admin',
       selectedAgent: memberData.agentId || undefined,
       joinFeesDone: joinFeesDoneStatus,
       joinFeesPaymentType: joinFeesPaymentType,
-      joinFeesTxtId: memberData?.joinFeesTxtId || ""
+      joinFeesTxtId: memberData?.joinFeesTxtId || "",
+      applicationNumber: memberData.applicationNumber || "",
+      joinInOffer: memberData.joinInOffer || undefined,
+      joinInOfferCustomAmount: memberData.joinInOfferCustomAmount || undefined,
     };
 
     // Add custom join fees amount if applicable
@@ -385,22 +387,7 @@ const handleDateOfBirthChange = (date) => {
   // Form submission
   const onFinish = async (values) => {
     setLoading(true);
-
-    // Validate applicationNo uniqueness if changed
-    if (values.applicationNo && Number(values.applicationNo) !== Number(memberData.applicationNo)) {
-      const memberCollectionPath = `/users/${user.uid}/programs/${programId}/members`;
-      const exists = await checkApplicationNoExists(memberCollectionPath, values.applicationNo, memberData.id);
-      if (exists) {
-        form.setFields([{
-          name: 'applicationNo',
-          errors: [`आवेदन संख्या ${values.applicationNo} पहले से मौजूद है`],
-        }]);
-        message.error(`आवेदन संख्या ${values.applicationNo} पहले से इस कार्यक्रम में मौजूद है`);
-        setLoading(false);
-        return;
-      }
-    }
-
+console.log(values,'values')
     try {
       const updatedData = { ...memberData };
 
@@ -486,6 +473,7 @@ const handleDateOfBirthChange = (date) => {
         phone: values.phone,
         phoneAlt: values.phoneAlt || '',
         aadhaarNo: values.aadhaarNo,
+        applicationNumber: values.applicationNumber || "",
         bobDate: values.bobDate.format('DD-MM-YYYY'),
         currentAddress: values.currentAddress,
         village: values.village,
@@ -502,12 +490,13 @@ const handleDateOfBirthChange = (date) => {
         joinFeesDone: values.joinFeesDone || false,
         joinFeesTxtId: values.joinFeesTxtId || "",
         joinFeesPaymentType: values.joinFeesPaymentType || "",
+        joinInOffer: values.joinInOffer || "",
+        joinInOfferCustomAmount: values.joinInOffer === 'custom' ? (values.joinInOfferCustomAmount || 0) : 0,
         joinFeesPaidAmount: joinFeesPaidAmount,
         joinFeesRemainingAmount: joinFeesRemainingAmount,
         addedBy: values.addedBy,
         addedByName: values.addedBy === 'agent' ? agentName : 'Admin',
         agentId: values.addedBy === 'agent' ? values.selectedAgent : null,
-        applicationNo: values.applicationNo ? Number(values.applicationNo) : memberData.applicationNo,
         extraDetails: extraFields.filter(f => f.label && f.value),
         updatedAt: new Date(),
       };
@@ -657,6 +646,11 @@ const handleDateOfBirthChange = (date) => {
 
             <Row gutter={16}>
               <Col span={8}>
+                <Form.Item name="applicationNumber" label="Application Number">
+                  <Input placeholder="Optional" />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
                 <Form.Item
                   name="displayName"
                   label="नाम"
@@ -789,23 +783,6 @@ const handleDateOfBirthChange = (date) => {
               </Col>
               <Col span={8}>
                 <Form.Item
-                  name="applicationNo"
-                  label="आवेदन संख्या (Application No.)"
-                  rules={[
-                    {
-                      pattern: /^\d+$/,
-                      message: 'केवल संख्या दर्ज करें'
-                    }
-                  ]}
-                >
-                  <Input prefix={<IdcardOutlined />} />
-                </Form.Item>
-              </Col>
-            </Row>
-
-            <Row gutter={16}>
-              <Col span={8}>
-                <Form.Item
                   name="bobDate"
                   label="जन्म तिथि"
                   rules={[{ required: true, message: 'आवश्यक' }]}
@@ -876,16 +853,24 @@ const handleDateOfBirthChange = (date) => {
             <Divider orientation="left">नामांकन शुल्क</Divider>
             <Card size="small">
               <Row gutter={16}>
-                <Col span={24}>
+                <Col span={12}>
+                  <Form.Item name="joinInOffer" label="Join In Offer (Initial Commitment)">
+                    <Select placeholder="Select offer" onChange={setJoinInOffer}>
+                      <Option value="full">Full (₹{joinFees})</Option>
+                      <Option value="half">Half / 50% (₹{Math.round(joinFees / 2)})</Option>
+                      <Option value="custom">Custom Amount</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
                   <Form.Item name="joinFeesDone" valuePropName="checked">
                     <Checkbox onChange={(e) => {
                       setIsJoinFeesDone(e.target.checked);
                       if (!e.target.checked) {
-                        // Reset payment type and custom amount when unchecked
                         form.setFieldsValue({
                           joinFeesPaymentType: undefined,
                           customJoinFeesAmount: undefined,
-                          joinFeesTxtId: undefined
+                          joinFeesTxtId: undefined,
                         });
                         setJoinFeesPaymentType(null);
                         setCustomJoinFeesAmount(0);
@@ -896,6 +881,24 @@ const handleDateOfBirthChange = (date) => {
                   </Form.Item>
                 </Col>
               </Row>
+
+              {joinInOffer === 'custom' && (
+                <Row gutter={16} className="mt-2">
+                  <Col span={12}>
+                    <Form.Item
+                      name="joinInOfferCustomAmount"
+                      label="Join In Offer Custom Amount (₹)"
+                      rules={[{ required: true, message: 'कृपया राशि दर्ज करें' }]}
+                    >
+                      <InputNumber
+                        placeholder="Enter amount"
+                        className="w-full"
+                        min={1}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )}
 
               {isJoinFeesDone && (
                 <>
@@ -912,14 +915,10 @@ const handleDateOfBirthChange = (date) => {
                             setJoinFeesPaymentType(value);
                             if (value === 'full') {
                               setCustomJoinFeesAmount(joinFees);
-                              form.setFieldsValue({
-                                customJoinFeesAmount: joinFees
-                              });
+                              form.setFieldsValue({ customJoinFeesAmount: joinFees });
                             } else if (value === 'custom') {
                               setCustomJoinFeesAmount(0);
-                              form.setFieldsValue({
-                                customJoinFeesAmount: undefined
-                              });
+                              form.setFieldsValue({ customJoinFeesAmount: undefined });
                             }
                           }}
                         >
@@ -928,7 +927,8 @@ const handleDateOfBirthChange = (date) => {
                         </Select>
                       </Form.Item>
                     </Col>
-
+                  </Row>
+                  <Row gutter={16}>
                     <Col span={12}>
                       {joinFeesPaymentType === 'custom' && (
                         <Form.Item

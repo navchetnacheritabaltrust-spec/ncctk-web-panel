@@ -295,12 +295,12 @@ function MemberDetailsView({isModalVisible, handleCloseModal, showDeleteConfirm,
                 <div className='flex-grow'>
                   <Descriptions layout="vertical" bordered column={2} size='small'>
                     <Descriptions.Item label="Application Number">
-                      <Badge status="processing" text={selectedMember.applicationNo || '-'} />
+                      <Badge status="processing" text={selectedMember.applicationNumber || '-'} />
                     </Descriptions.Item>
                     <Descriptions.Item label="Registration Number">{selectedMember.registrationNumber}</Descriptions.Item>
                     <Descriptions.Item label="Name">{selectedMember.displayName}</Descriptions.Item>
                     <Descriptions.Item label="Father Name">{selectedMember.fatherName || '-'}</Descriptions.Item>
-                    <Descriptions.Item label="Surname/Jati">{selectedMember.jati || '-'}</Descriptions.Item>
+                    {/* <Descriptions.Item label="Surname/Jati">{selectedMember.jati || '-'}</Descriptions.Item> */}
                     <Descriptions.Item label="Gotra">{selectedMember.gotra || '-'}</Descriptions.Item>
                     <Descriptions.Item label="Phone">{selectedMember.phone}</Descriptions.Item>
                     <Descriptions.Item label="Alternative Phone">{selectedMember.phoneAlt || '-'}</Descriptions.Item>
@@ -320,6 +320,14 @@ function MemberDetailsView({isModalVisible, handleCloseModal, showDeleteConfirm,
                 </Descriptions.Item>
                 <Descriptions.Item label="Join Fees">
                   <Tag color="blue" className="text-base font-bold">₹{selectedMember.joinFees || 0}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Join In Offer">
+                  <Tag color="geekblue">
+                    {selectedMember.joinInOffer === 'full' ? 'Full (100%)' :
+                     selectedMember.joinInOffer === 'half' ? 'Half (50%)' :
+                     selectedMember.joinInOffer === 'custom' ? `Custom (₹${selectedMember.joinInOfferCustomAmount || 0})` :
+                     selectedMember.joinInOffer || '-'}
+                  </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="Join Fees Status">
                   <Badge 
@@ -558,7 +566,7 @@ function MemberDetailsView({isModalVisible, handleCloseModal, showDeleteConfirm,
                       <Text strong>Identity Summary</Text>
                     </div>
                     <div className="space-y-1">
-                      <div>🔢 Application Number: <strong>{selectedMember.applicationNo || '-'}</strong></div>
+                      <div>🔢 Application Number: <strong>{selectedMember.applicationNumber || '-'}</strong></div>
                       <div>🆔 Registration Number: <strong>{selectedMember.registrationNumber}</strong></div>
                       <div>👤 Aadhaar: {selectedMember.aadhaarNo ? '✓ Verified' : '✗ Not provided'}</div>
                       <div>👥 Guardian Aadhaar: {selectedMember.guardianAadharNo ? '✓ Provided' : '✗ Not provided'}</div>

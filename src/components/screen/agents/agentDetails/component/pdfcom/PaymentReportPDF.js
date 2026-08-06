@@ -581,6 +581,18 @@ const PaymentStatusPDF = ({
             <Text style={styles.memberInfoLabel}>गाँव:</Text>
             <Text style={styles.memberInfoValue}>{member.village || 'N/A'}</Text>
           </View>
+          <View style={styles.memberInfoGridItem}>
+            <Text style={styles.memberInfoLabel}>जाति:</Text>
+            <Text style={styles.memberInfoValue}>{member.jati || 'N/A'}</Text>
+          </View>
+          <View style={styles.memberInfoGridItem}>
+            <Text style={styles.memberInfoLabel}>वारसदार:</Text>
+            <Text style={styles.memberInfoValue}>{member.guardian || 'N/A'}</Text>
+          </View>
+          <View style={styles.memberInfoGridItem}>
+            <Text style={styles.memberInfoLabel}>संबंध:</Text>
+            <Text style={styles.memberInfoValue}>{member.guardianRelation || 'N/A'}</Text>
+          </View>
         </View>
         <View style={styles.memberStatsRow}>
           <View style={styles.memberStatItem}>
@@ -594,6 +606,10 @@ const PaymentStatusPDF = ({
           <View style={styles.memberStatItem}>
             <Text style={styles.memberStatLabel}>बकाया राशि</Text>
             <Text style={styles.memberStatValue}>{formatCurrency(stats.pendingAmount)}</Text>
+          </View>
+          <View style={styles.memberStatItem}>
+            <Text style={styles.memberStatLabel}> किस्त राशि</Text>
+            <Text style={styles.memberStatValue}>{formatCurrency(member.payAmount)}</Text>
           </View>
         </View>
       </View>
@@ -617,6 +633,9 @@ const PaymentStatusPDF = ({
           <View style={[styles.tableHeaderCell, styles.colFatherName]}>
             <Text style={styles.textLeft}>पिता / पति</Text>
           </View>
+          <View style={[styles.tableHeaderCell, styles.colAmount]}>
+            <Text style={styles.textRight}>जाति</Text>
+          </View>
           <View style={[styles.tableHeaderCell, styles.colRegNo]}>
             <Text style={styles.textCenter}>रजि. नं.</Text>
           </View>
@@ -626,12 +645,10 @@ const PaymentStatusPDF = ({
           <View style={[styles.tableHeaderCell, styles.colPhone]}>
             <Text style={styles.textCenter}>फोन नं.</Text>
           </View>
-          <View style={[styles.tableHeaderCell, styles.colVillage]}>
+          <View style={[styles.tableHeaderCell, styles.colVillage,, { borderRightWidth: 0 }]}>
             <Text style={styles.textCenter}>गाँव</Text>
           </View>
-          <View style={[styles.tableHeaderCell, styles.colAmount, { borderRightWidth: 0 }]}>
-            <Text style={styles.textRight}>राशि (₹)</Text>
-          </View>
+ 
         </View>
 
         {/* ── Data Rows ── */}
@@ -649,6 +666,11 @@ const PaymentStatusPDF = ({
             <View style={[styles.tableCell, styles.colFatherName]}>
               <Text style={[styles.textLeft, styles.dataText]}>{marriage.closingFatherName || '-'}</Text>
             </View>
+              <View style={[styles.tableCell, styles.colAmount]}>
+              <Text style={[styles.textRight]}>
+                {marriage.closingJati ? marriage.closingJati : '-'}
+              </Text>
+            </View>
             <View style={[styles.tableCell, styles.colRegNo]}>
               <Text style={[styles.textCenter, styles.dataText]}>{marriage.closingRegNo || '-'}</Text>
             </View>
@@ -658,14 +680,10 @@ const PaymentStatusPDF = ({
             <View style={[styles.tableCell, styles.colPhone]}>
               <Text style={[styles.textCenter, styles.dataText]}>{marriage.closingPhone || '-'}</Text>
             </View>
-            <View style={[styles.tableCell, styles.colVillage]}>
+            <View style={[styles.tableCell, styles.colVillage, { borderRightWidth: 0 }]}>
               <Text style={[styles.textCenter, styles.dataText]}>{marriage.closingVillage || '-'}</Text>
             </View>
-            <View style={[styles.tableCell, styles.colAmount, { borderRightWidth: 0 }]}>
-              <Text style={[styles.textRight, styles.dataBoldText, { color: '#cf1322' }]}>
-                {formatCurrency(marriage.amount)}
-              </Text>
-            </View>
+          
           </View>
         ))}
 
@@ -678,12 +696,12 @@ const PaymentStatusPDF = ({
             <View style={[styles.tableCell, styles.colSerial]}>
               <Text style={[styles.textCenter, styles.emptyTableText]}>—</Text>
             </View>
-            {['colMarriageName','colFatherName','colRegNo','colDate','colPhone','colVillage'].map((col, ci) => (
+            {['colMarriageName','colFatherName','colAmount','colRegNo','colDate','colPhone'].map((col, ci) => (
               <View key={ci} style={[styles.tableCell, styles[col]]}>
                 <Text style={styles.emptyTableText}> </Text>
               </View>
             ))}
-            <View style={[styles.tableCell, styles.colAmount, { borderRightWidth: 0 }]}>
+            <View style={[styles.tableCell, styles.colVillage, { borderRightWidth: 0 }]}>
               <Text style={styles.emptyTableText}> </Text>
             </View>
           </View>
@@ -753,6 +771,7 @@ const PaymentStatusPDF = ({
   // ─── Build All Pages ───
   const allPages = [];
   let globalPageNumber = 0;
+
 
   membersWithPending.forEach((member) => {
     const stats = calculateMemberStats(member);
