@@ -24,7 +24,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { createData, getData } from '@/lib/services/firebaseService';
 import { uploadFile } from '@/lib/services/storageService';
 import { useAuth } from '@/lib/AuthProvider';
-import { checkAadhaarExists, createMemberInTransaction, generateUnique4Digit, sendFirebaseNotification } from '@/lib/helper';
+import { checkAadhaarExists, checkApplicationNoExists, createMemberInTransaction, generateUnique4Digit, sendFirebaseNotification } from '@/lib/helper';
 import { districtsByState, gender, states } from '@/lib/staticData';
 import { setgetMemberDataChange } from '@/redux/slices/commonSlice';
 import { createMemberAccount, generateMemberPassword } from '@/lib/commonFun';
@@ -454,7 +454,18 @@ const [closingDays, setClosingDays] = useState(null);
     
     const aadhaarNo = values.aadhaarNo;
     const programId = values.program;
-    
+    if (values.applicationNo) {
+      const exists = await checkApplicationNoExists(memberCollectionPath, values.applicationNo);
+      if (exists) {
+        form.setFields([{
+          name: 'applicationNo',
+          errors: [`आवेदन संख्या ${values.applicationNo} पहले से मौजूद है`],
+        }]);
+        message.error(`आवेदन संख्या ${values.applicationNo} पहले से इस कार्यक्रम में मौजूद है`);
+        setLoading(false);
+        return;
+      }
+    }
     if (aadhaarNo && programId) {
       try {
         setIsAadhaarChecking(true);
@@ -620,10 +631,13 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
         documentFrontURL: fileUrls.documentFront?.url || '',
         documentBackURL: fileUrls.documentBack?.url || '',
         guardianDocumentURL: fileUrls.guardianDocument?.url || '',
+        applicationNo: values.applicationNo ? Number(values.applicationNo) : undefined,
         extraDetails: extraFields.filter(f => f.label && f.value),
         createdAt: new Date(),
       };
-
+if (!memberData.applicationNo) {
+        delete memberData.applicationNo;
+      }
       // Save to Firestore
       const agentIdToUpdate = values.addedBy === 'agent' ? values.selectedAgent : null;
       const programDocPath = `/users/${user.uid}/programs/${values.program}`;
@@ -1015,6 +1029,25 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
                         prefix={<CalendarOutlined />}
                         disabledDate={(current) => current && current > dayjs()}
                         onChange={handleJoinDateChange}
+                      />
+                    </Form.Item>
+
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item
+                      name="applicationNo"
+                      label="आवेदन संख्या (Application No.)"
+                      tooltip="खाली छोड़ें तो स्वचालित (10001 से शुरू) या मैन्युअल दर्ज करें"
+                      rules={[
+                        {
+                          pattern: /^\d+$/,
+                          message: 'केवल संख्या दर्ज करें'
+                        }
+                      ]}
+                    >
+                      <Input
+                        placeholder="खाली=ऑटो या मैन्युअल दर्ज करें (10001+)"
+                        prefix={<IdcardOutlined />}
                       />
                     </Form.Item>
                   </Col>

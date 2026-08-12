@@ -169,7 +169,7 @@ export async function generateApplicationNumber(programDocPath) {
  */
 export const checkApplicationNoExists = async (memberCollectionPath, applicationNo, excludeMemberId) => {
     try {
-        const membersRef = collection(db, memberCollectionPath);
+        const membersRef = collection(db, memberCollectionPath.replace(/^\/+/, ''));
         const q = query(
             membersRef,
             where('applicationNo', '==', Number(applicationNo)),
@@ -195,7 +195,7 @@ export const checkApplicationNoExists = async (memberCollectionPath, application
 export const checkAadhaarExists = async (memberCollectionPath, aadhaarNo) => {
   try {
     // Create a query to check if aadhaarNo exists
-    const membersRef = collection(db, memberCollectionPath);
+    const membersRef = collection(db, memberCollectionPath.replace(/^\/+/, ''));
     const q = query(
       membersRef, 
       where("status", "==", "accepted"), // Only check accepted members
@@ -222,7 +222,7 @@ export const checkAadhaarExists = async (memberCollectionPath, aadhaarNo) => {
  */
 export const checkAadhaarExistsWithDetails = async (memberCollectionPath, aadhaarNo) => {
   try {
-    const membersRef = collection(db, memberCollectionPath);
+    const membersRef = collection(db, memberCollectionPath.replace(/^\/+/, ''));
     const q = query(
       membersRef, 
       where('aadhaarNo', '==', aadhaarNo),

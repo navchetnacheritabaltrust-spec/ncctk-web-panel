@@ -26,6 +26,7 @@ import { uploadFile } from '@/lib/services/storageService';
 import { useAuth } from '@/lib/AuthProvider';
 import { deleteObject, ref } from 'firebase/storage';
 import { districtsByState, gender, states } from '@/lib/staticData';
+import { checkApplicationNoExists } from '@/lib/helper';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -243,6 +244,7 @@ useEffect(() => {
       joinFeesTxtId: memberData?.joinFeesTxtId || "",
       applicationNumber: memberData.applicationNumber || "",
       joinInOffer: memberData.joinInOffer || undefined,
+      applicationNo: memberData.applicationNo || undefined,
       joinInOfferCustomAmount: memberData.joinInOfferCustomAmount || undefined,
     };
 
@@ -388,6 +390,19 @@ const handleDateOfBirthChange = (date) => {
   const onFinish = async (values) => {
     setLoading(true);
 console.log(values,'values')
+if (values.applicationNo && Number(values.applicationNo) !== Number(memberData.applicationNo)) {
+      const memberCollectionPath = `users/${user.uid}/programs/${programId}/members`;
+      const exists = await checkApplicationNoExists(memberCollectionPath, values.applicationNo, memberData.id);
+      if (exists) {
+        form.setFields([{
+          name: 'applicationNo',
+          errors: [`आवेदन संख्या ${values.applicationNo} पहले से मौजूद है`],
+        }]);
+        message.error(`आवेदन संख्या ${values.applicationNo} पहले से इस कार्यक्रम में मौजूद है`);
+        setLoading(false);
+        return;
+      }
+    }
     try {
       const updatedData = { ...memberData };
 
@@ -497,6 +512,7 @@ console.log(values,'values')
         addedBy: values.addedBy,
         addedByName: values.addedBy === 'agent' ? agentName : 'Admin',
         agentId: values.addedBy === 'agent' ? values.selectedAgent : null,
+        applicationNo: values.applicationNo ? Number(values.applicationNo) : memberData.applicationNo,
         extraDetails: extraFields.filter(f => f.label && f.value),
         updatedAt: new Date(),
       };
@@ -779,6 +795,20 @@ console.log(values,'values')
                     prefix={<CalendarOutlined />}
                     disabledDate={(current) => current && current > dayjs()}
                   />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item
+                  name="applicationNo"
+                  label="आवेदन संख्या (Application No.)"
+                  rules={[
+                    {
+                      pattern: /^\d+$/,
+                      message: 'केवल संख्या दर्ज करें'
+                    }
+                  ]}
+                >
+                  <Input prefix={<IdcardOutlined />} />
                 </Form.Item>
               </Col>
               <Col span={8}>
