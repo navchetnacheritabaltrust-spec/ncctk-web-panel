@@ -454,14 +454,31 @@ const [closingDays, setClosingDays] = useState(null);
     
     const aadhaarNo = values.aadhaarNo;
     const programId = values.program;
+
+    if (!programId) {
+      message.error('कृपया पहले कार्यक्रम का चयन करें।');
+      setLoading(false);
+      return;
+    }
+
+    const programDocPath = `/users/${user.uid}/programs/${programId}`;
+    const memberCollectionPath = `${programDocPath}/members`;
+
     if (values.applicationNo) {
-      const exists = await checkApplicationNoExists(memberCollectionPath, values.applicationNo);
-      if (exists) {
-        form.setFields([{
-          name: 'applicationNo',
-          errors: [`आवेदन संख्या ${values.applicationNo} पहले से मौजूद है`],
-        }]);
-        message.error(`आवेदन संख्या ${values.applicationNo} पहले से इस कार्यक्रम में मौजूद है`);
+      try {
+        const exists = await checkApplicationNoExists(memberCollectionPath, values.applicationNo);
+        if (exists) {
+          form.setFields([{
+            name: 'applicationNo',
+            errors: [`आवेदन संख्या ${values.applicationNo} पहले से मौजूद है`],
+          }]);
+          message.error(`आवेदन संख्या ${values.applicationNo} पहले से इस कार्यक्रम में मौजूद है`);
+          setLoading(false);
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking application number:', error);
+        message.error('आवेदन संख्या जाँचने में त्रुटि हुई। कृपया पुनः प्रयास करें।');
         setLoading(false);
         return;
       }
@@ -469,9 +486,7 @@ const [closingDays, setClosingDays] = useState(null);
     if (aadhaarNo && programId) {
       try {
         setIsAadhaarChecking(true);
-        const programDocPath = `/users/${user.uid}/programs/${programId}`;
-        const memberCollectionPath = programDocPath + '/members';
-        
+
         const isAadhaarExists = await checkAadhaarExists(memberCollectionPath, aadhaarNo);
         
         if (isAadhaarExists) {
@@ -640,9 +655,6 @@ if (!memberData.applicationNo) {
       }
       // Save to Firestore
       const agentIdToUpdate = values.addedBy === 'agent' ? values.selectedAgent : null;
-      const programDocPath = `/users/${user.uid}/programs/${values.program}`;
-      const memberCollectionPath = programDocPath + '/members';
-
       const result = await createMemberInTransaction(
         programDocPath,
         memberCollectionPath,

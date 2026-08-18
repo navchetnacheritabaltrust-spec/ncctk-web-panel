@@ -389,16 +389,32 @@ const handleDateOfBirthChange = (date) => {
   // Form submission
   const onFinish = async (values) => {
     setLoading(true);
-console.log(values,'values')
-if (values.applicationNo && Number(values.applicationNo) !== Number(memberData.applicationNo)) {
-      const memberCollectionPath = `users/${user.uid}/programs/${programId}/members`;
-      const exists = await checkApplicationNoExists(memberCollectionPath, values.applicationNo, memberData.id);
-      if (exists) {
-        form.setFields([{
-          name: 'applicationNo',
-          errors: [`आवेदन संख्या ${values.applicationNo} पहले से मौजूद है`],
-        }]);
-        message.error(`आवेदन संख्या ${values.applicationNo} पहले से इस कार्यक्रम में मौजूद है`);
+
+    const currentProgramId = programId || memberData?.programId;
+
+    if (!currentProgramId) {
+      message.error('कार्यक्रम नहीं मिला। कृपया पुनः प्रयास करें।');
+      setLoading(false);
+      return;
+    }
+
+    const memberCollectionPath = `users/${user.uid}/programs/${currentProgramId}/members`;
+
+    if (values.applicationNo && Number(values.applicationNo) !== Number(memberData.applicationNo)) {
+      try {
+        const exists = await checkApplicationNoExists(memberCollectionPath, values.applicationNo, memberData.id);
+        if (exists) {
+          form.setFields([{
+            name: 'applicationNo',
+            errors: [`आवेदन संख्या ${values.applicationNo} पहले से मौजूद है`],
+          }]);
+          message.error(`आवेदन संख्या ${values.applicationNo} पहले से इस कार्यक्रम में मौजूद है`);
+          setLoading(false);
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking application number:', error);
+        message.error('आवेदन संख्या जाँचने में त्रुटि हुई। कृपया पुनः प्रयास करें।');
         setLoading(false);
         return;
       }
