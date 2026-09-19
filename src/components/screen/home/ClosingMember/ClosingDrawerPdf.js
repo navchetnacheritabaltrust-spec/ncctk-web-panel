@@ -613,7 +613,7 @@ const ClosingDrawerPdf = ({ data, selectedProgram }) => {
               {/* Agent */}
               <View style={styles.footerBox}>
                 <Text style={styles.footerValue}>
-                  {data?.addedByName || 'कार्यकर्ता का नाम'} ({data?.agentPhone || 'मोबाइल नंबर'})
+                  {data?.addedByName || 'कार्यकर्ता का नाम'} 
                 </Text>
                 <Text style={styles.footerLabel}>कार्यकर्ता</Text>
               </View>
