@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Button, Drawer, Form, Input, InputNumber, Select, Space, Card, Typography, App, Radio, Modal, Checkbox, Table, Spin, Alert, Tag } from 'antd';
 import { FiPlusCircle, FiTrash2, FiUser, FiMapPin, FiDollarSign, FiCalendar, FiTag, FiEdit2, FiSave, FiAlertTriangle } from 'react-icons/fi';
 import { useAuth } from '@/lib/AuthProvider';
-import { collection, addDoc, updateDoc, doc, query, where, getDocs, writeBatch } from "firebase/firestore";
+import { collection, addDoc, updateDoc, doc, query, where, getDocs, getDoc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { setgetMemberDataChange, setPrograms } from '@/redux/slices/commonSlice';
 import { useDispatch, useSelector } from 'react-redux';
@@ -32,6 +32,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
   const [pendingPreview, setPendingPreview] = useState([]);
   const [loadingPendingPreview, setLoadingPendingPreview] = useState(false);
   const [pendingStats, setPendingStats] = useState(null);
+  const [updateError, setUpdateError] = useState('');
   const dispatch=useDispatch()
   const programList = useSelector((state) => state.data.programList);
 
@@ -105,56 +106,92 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     return changed;
   };
 
-  // Age group ke members dhoondo — ageGroup id se, aur purane members ke liye
-  // ageGroupRange ("25-50") se bhi. delete_flag missing ho to bhi member count hoga.
-  const getMemberDocsForGroup = async (membersRef, group, oldGroup) => {
-    const ranges = [...new Set([
-      `${group.startAge}-${group.endAge}`,
-      oldGroup ? `${oldGroup.startAge}-${oldGroup.endAge}` : null,
-    ].filter(Boolean))];
-
-    const snaps = await Promise.all([
-      getDocs(query(membersRef, where('ageGroup', '==', group.id))),
-      getDocs(query(membersRef, where('ageGroupRange', 'in', ranges))),
-    ]);
-
-    const map = new Map();
-    snaps.forEach(snap => snap.forEach(d => {
-      if (d.data().delete_flag === true) return;
-      map.set(d.id, d);
-    }));
-    return [...map.values()];
+  // ── Member ka sahi age group nikalna ─────────────────────────────────────
+  // AddMember jaisa hi logic: umar = (dateJoin - bobDate) saal me, phir
+  // group.startAge <= umar < group.endAge. Saved ageGroup id / ageGroupRange
+  // sirf tab use hote hain jab janm tithi na ho (purane data me id galat ho sakti hai).
+  const parseDate = (val) => {
+    if (!val) return null;
+    if (typeof val?.toDate === 'function') return val.toDate();
+    if (typeof val === 'object' && 'seconds' in val) return new Date(val.seconds * 1000);
+    if (val instanceof Date) return val;
+    if (typeof val === 'string') {
+      const m = val.trim().match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/); // DD-MM-YYYY
+      if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    return null;
   };
 
-  // Batch update all members with matching ageGroup ID
-  const updateMembersForAgeGroups = async (userUid, programId, groups) => {
+  const getDecimalAge = (birth, join) => {
+    let years = join.getFullYear() - birth.getFullYear();
+    const anniversary = new Date(birth);
+    anniversary.setFullYear(birth.getFullYear() + years);
+    if (anniversary > join) { years--; anniversary.setFullYear(birth.getFullYear() + years); }
+    const next = new Date(anniversary);
+    next.setFullYear(anniversary.getFullYear() + 1);
+    return years + (join - anniversary) / (next - anniversary);
+  };
+
+  // Priority: 1) member me saved ageGroup id (agar program me maujood hai)
+  //           2) saved ageGroupRange  3) janm tithi + joining date se umar
+  const resolveMemberGroup = (m, groups) => {
+    const byId = groups.find(gr => gr.id && gr.id === m.ageGroup);
+    if (byId) return { group: byId, matchedBy: 'id' };
+    const byRange = groups.find(gr => `${gr.startAge}-${gr.endAge}` === m.ageGroupRange);
+    if (byRange) return { group: byRange, matchedBy: 'range' };
+    const birth = parseDate(m.bobDate);
+    if (birth) {
+      const join = parseDate(m.dateJoin) || parseDate(m.createdAt) || new Date();
+      const age = getDecimalAge(birth, join);
+      const g = groups.find(gr => age >= Number(gr.startAge) && age < Number(gr.endAge));
+      if (g) return { group: g, matchedBy: 'age' };
+    }
+    return { group: null, matchedBy: null };
+  };
+
+  // Program ke saare (non-deleted) members ko unke sahi group ke saath laao
+  const getResolvedMembers = async (userUid, programId, groups) => {
+    const snap = await getDocs(collection(db, `users/${userUid}/programs/${programId}/members`));
+    const resolved = [];
+    let unmatched = 0;
+    snap.forEach(d => {
+      const m = d.data();
+      if (m.delete_flag === true) return;
+      const { group, matchedBy } = resolveMemberGroup(m, groups);
+      if (!group) { unmatched++; return; }
+      resolved.push({ docSnap: d, data: m, group, matchedBy });
+    });
+    return { resolved, unmatched };
+  };
+
+  // Form ke naye age groups (id ke saath)
+  const getNewAgeGroups = (values) =>
+    (values?.ageGroups || []).filter(g => g && g.id);
+
+  // Badle hue groups ke members update karo (sahi ageGroup id bhi set ho jaayegi)
+  const updateMembersForAgeGroups = async (userUid, programId, changedGroups, allGroups) => {
     setIsUpdatingMembers(true);
     try {
-      const membersRef = collection(db, `users/${userUid}/programs/${programId}/members`);
-      let totalUpdated = 0;
+      const changedIds = new Set(changedGroups.map(g => g.id));
+      const { resolved } = await getResolvedMembers(userUid, programId, allGroups);
+      const targets = resolved.filter(r => changedIds.has(r.group.id));
 
-      for (const group of groups) {
-        const oldGroup = oldAgeGroups.find(g => g.id === group.id);
-        const memberDocs = await getMemberDocsForGroup(membersRef, group, oldGroup);
-        if (memberDocs.length === 0) continue;
-        const snapshot = { docs: memberDocs, size: memberDocs.length };
-
-        // Firestore batch limit 500 hai — chunks me commit karo
-        for (const docChunk of chunkArray(snapshot.docs, 450)) {
-          const batch = writeBatch(db);
-          docChunk.forEach(docSnap => {
-            batch.update(docSnap.ref, {
-              joinFees: Number(group.joinFee),
-              payAmount: Number(group.payAmount),
-              ageGroupRange: `${group.startAge}-${group.endAge}`,
-              updatedAt: new Date(),
-            });
+      for (const chunk of chunkArray(targets, 450)) {
+        const batch = writeBatch(db);
+        chunk.forEach(({ docSnap, group }) => {
+          batch.update(docSnap.ref, {
+            ageGroup: group.id,
+            joinFees: Number(group.joinFee),
+            payAmount: Number(group.payAmount),
+            ageGroupRange: `${group.startAge}-${group.endAge}`,
+            updatedAt: new Date(),
           });
-          await batch.commit();
-        }
-        totalUpdated += snapshot.size;
+        });
+        await batch.commit();
       }
-      return totalUpdated;
+      return targets.length;
     } catch (error) {
       console.error('Error updating members:', error);
       throw error;
@@ -163,73 +200,88 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     }
   };
 
-  // Sirf wahi groups jinka payAmount change hua hai (joinFee change se pending entries par asar nahi)
+  // Checkbox tabhi dikhega jab kisi group ka payAmount badla ho
   const payAmountChangedGroups = changedAgeGroups.filter(
     g => Number(g.payAmount) !== Number(g.oldPayAmount)
   );
 
-  // Changed age groups ke members ki existing PENDING entries dhoondo.
-  // Paid / partial entries ko kabhi touch nahi karna.
-  const fetchPendingEntriesPreview = async (userUid, programId, groups) => {
-    const membersRef = collection(db, `users/${userUid}/programs/${programId}/members`);
+  // Har member ki PENDING entries jinka amount uske (naye) group ke Pay Amount se match nahi karta.
+  // Paid / partial / jisme koi paisa aa chuka ho — kabhi touch nahi karna.
+  const fetchPendingEntriesPreview = async (userUid, programId, allGroups, targetGroupIds) => {
+    const targetIds = new Set(targetGroupIds || []);
     const pendingRef = collection(db, `users/${userUid}/programs/${programId}/payment_pending`);
-    const result = [];
-    const stats = { membersFound: 0, entriesFound: 0, paidSkipped: 0, sameAmountSkipped: 0 };
+    const stats = {
+      totalMembers: 0, unmatchedMembers: 0, membersWithPending: 0,
+      entriesFound: 0, paidSkipped: 0, sameAmountSkipped: 0,
+    };
 
-    for (const group of groups) {
-      const newPayAmount = Number(group.payAmount);
-      const oldGroup = oldAgeGroups.find(g => g.id === group.id);
-      const memberDocs = await getMemberDocsForGroup(membersRef, group, oldGroup);
-      stats.membersFound += memberDocs.length;
-      if (memberDocs.length === 0) continue;
+    const { resolved: allResolved, unmatched } = await getResolvedMembers(userUid, programId, allGroups);
+    // Sirf un groups ke members jinka Pay Amount abhi badla gaya hai
+    const resolved = allResolved.filter(r => targetIds.has(r.group.id));
+    stats.totalMembers = resolved.length;
+    stats.unmatchedMembers = unmatched;
+    if (resolved.length === 0) return { rows: [], stats };
 
-      const memberMap = {};
-      memberDocs.forEach(d => { memberMap[d.id] = d.data(); });
+    const memberInfo = {};
+    resolved.forEach(r => { memberInfo[r.docSnap.id] = r; });
 
-      // Firestore 'in' query max 30 values
-      const pendingSnaps = await Promise.all(
-        chunkArray(Object.keys(memberMap), 30).map(ids =>
-          getDocs(query(pendingRef, where('memberId', 'in', ids)))
-        )
+    // Firestore 'in' query max 30 values — 10-10 chunk parallel chalao
+    const idChunks = chunkArray(Object.keys(memberInfo), 30);
+    const pendingDocs = [];
+    for (const group of chunkArray(idChunks, 10)) {
+      const snaps = await Promise.all(
+        group.map(ids => getDocs(query(pendingRef, where('memberId', 'in', ids))))
       );
-
-      const byMember = {};
-      pendingSnaps.forEach(snap => snap.forEach(d => {
-        const p = d.data();
-        if (p.delete_flag === true) return;
-        stats.entriesFound++;
-        // Paid / partial / jisme koi payment aa chuka ho — kabhi touch nahi karna
-        const status = String(p.status || 'pending').toLowerCase();
-        if (status === 'paid' || status === 'partial' || Number(p.paidAmount) > 0 || p.transactionId) {
-          stats.paidSkipped++;
-          return;
-        }
-        // Purani entries me payAmount missing ho to app ₹200 maanta hai
-        const currentAmount = p.payAmount === undefined || p.payAmount === null ? 200 : Number(p.payAmount);
-        if (currentAmount === newPayAmount) { stats.sameAmountSkipped++; return; }
-        if (!byMember[p.memberId]) byMember[p.memberId] = [];
-        byMember[p.memberId].push({
-          id: d.id,
-          payAmount: currentAmount,
-          hasMemberDetailsPayAmount: !!(p.memberDetails && 'payAmount' in p.memberDetails),
-        });
-      }));
-
-      Object.entries(byMember).forEach(([memberId, entries]) => {
-        const m = memberMap[memberId] || {};
-        result.push({
-          key: `${group.id}_${memberId}`,
-          memberId,
-          displayName: m.displayName || 'Unknown',
-          registrationNumber: m.registrationNumber || 'N/A',
-          village: m.village || '',
-          ageGroupLabel: `${group.startAge}-${group.endAge}`,
-          newPayAmount,
-          entries,
-        });
-      });
+      snaps.forEach(s => s.forEach(d => pendingDocs.push(d)));
     }
-    return { rows: result, stats };
+
+    const byMember = {};
+    const membersSeen = new Set();
+    pendingDocs.forEach(d => {
+      const p = d.data();
+      if (p.delete_flag === true) return;
+      const info = memberInfo[p.memberId];
+      if (!info) return;
+      stats.entriesFound++;
+      membersSeen.add(p.memberId);
+
+      const status = String(p.status || 'pending').toLowerCase();
+      if (status === 'paid' || status === 'partial' || Number(p.paidAmount) > 0 || p.transactionId) {
+        stats.paidSkipped++;
+        return;
+      }
+      const newPayAmount = Number(info.group.payAmount);
+      // Purani entries me payAmount missing ho to app ₹200 maanta hai
+      const currentAmount = p.payAmount === undefined || p.payAmount === null ? 200 : Number(p.payAmount);
+      if (currentAmount === newPayAmount) { stats.sameAmountSkipped++; return; }
+
+      if (!byMember[p.memberId]) byMember[p.memberId] = [];
+      byMember[p.memberId].push({
+        id: d.id,
+        payAmount: currentAmount,
+        newPayAmount,
+        hasMemberDetailsPayAmount: !!(p.memberDetails && 'payAmount' in p.memberDetails),
+      });
+    });
+    stats.membersWithPending = membersSeen.size;
+
+    const rows = Object.entries(byMember).map(([memberId, entries]) => {
+      const { data: m, group, matchedBy } = memberInfo[memberId];
+      return {
+        key: memberId,
+        memberId,
+        displayName: m.displayName || 'Unknown',
+        registrationNumber: m.registrationNumber || 'N/A',
+        village: m.village || '',
+        ageGroupId: group.id,
+        ageGroupLabel: `${group.startAge}-${group.endAge}`,
+        matchedBy,
+        newPayAmount: Number(group.payAmount),
+        entries,
+      };
+    });
+    rows.sort((a, b) => a.ageGroupLabel.localeCompare(b.ageGroupLabel) || a.displayName.localeCompare(b.displayName));
+    return { rows, stats };
   };
 
   const handleTogglePendingEntries = async (checked) => {
@@ -237,7 +289,10 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     if (!checked || !user?.uid || !program?.id) return;
     setLoadingPendingPreview(true);
     try {
-      const { rows, stats } = await fetchPendingEntriesPreview(user.uid, program.id, payAmountChangedGroups);
+      const { rows, stats } = await fetchPendingEntriesPreview(
+        user.uid, program.id, getNewAgeGroups(pendingFormValues),
+        payAmountChangedGroups.map(g => g.id)
+      );
       setPendingPreview(rows);
       setPendingStats(stats);
     } catch (error) {
@@ -251,14 +306,24 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     }
   };
 
-  // Confirm ki gayi pending entries update karo. Update se pehle dobara fetch karke
-  // check karte hain ki entry abhi bhi 'pending' hai — taaki beech me paid hui entry change na ho.
-  const updatePendingEntriesForGroups = async (userUid, programId, groups, confirmedPreview) => {
-    const confirmedIds = new Set(confirmedPreview.flatMap(m => m.entries.map(e => e.id)));
-    const { rows: fresh } = await fetchPendingEntriesPreview(userUid, programId, groups);
-    const toUpdate = fresh
-      .flatMap(m => m.entries.map(e => ({ ...e, newPayAmount: m.newPayAmount })))
-      .filter(e => confirmedIds.has(e.id));
+  // Confirm ki gayi entries update karo. Update se pehle dobara fetch karke check karte hain
+  // ki entry abhi bhi pending hai — taaki beech me paid hui entry change na ho.
+  const updatePendingEntriesForGroups = async (userUid, programId, confirmedPreview) => {
+    const pendingCol = `users/${userUid}/programs/${programId}/payment_pending`;
+    const confirmed = confirmedPreview.flatMap(m => m.entries);
+
+    // Har entry ko abhi dobara padho — beech me paid / partial ho gayi ho to skip
+    const toUpdate = [];
+    for (const chunk of chunkArray(confirmed, 50)) {
+      const snaps = await Promise.all(chunk.map(e => getDoc(doc(db, pendingCol, e.id))));
+      snaps.forEach((snap, idx) => {
+        if (!snap.exists()) return;
+        const p = snap.data();
+        const status = String(p.status || 'pending').toLowerCase();
+        if (status === 'paid' || status === 'partial' || Number(p.paidAmount) > 0 || p.transactionId) return;
+        toUpdate.push({ ...chunk[idx], currentAmount: p.payAmount ?? 200, hasMemberDetails: !!p.memberDetails });
+      });
+    }
 
     const now = new Date().toISOString();
     for (const entryChunk of chunkArray(toUpdate, 450)) {
@@ -266,16 +331,16 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
       entryChunk.forEach(e => {
         const data = {
           payAmount: e.newPayAmount,
-          previousPayAmount: e.payAmount,
+          previousPayAmount: e.currentAmount,
           payAmountUpdatedAt: now,
           updatedAt: now,
         };
         if (e.hasMemberDetailsPayAmount) data['memberDetails.payAmount'] = e.newPayAmount;
-        batch.update(doc(db, `users/${userUid}/programs/${programId}/payment_pending`, e.id), data);
+        batch.update(doc(db, pendingCol, e.id), data);
       });
       await batch.commit();
     }
-    return toUpdate.length;
+    return { updated: toUpdate.length, skipped: confirmed.length - toUpdate.length };
   };
 
   const resetPendingEntriesState = () => {
@@ -283,6 +348,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     setPendingPreview([]);
     setPendingStats(null);
     setLoadingPendingPreview(false);
+    setUpdateError('');
   };
 
   const handleSubmit = async (values) => {
@@ -311,7 +377,17 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     await saveProgram(values);
   };
 
-  const saveProgram = async (values) => {
+  // Save ke baad drawer band karna / form reset — alag function taaki popup flow me
+  // saara kaam khatam hone ke baad hi band ho
+  const finishSave = () => {
+    if (onSuccess) onSuccess();
+    dispatch(setgetMemberDataChange(true));
+    form.resetFields();
+    setOldAgeGroups([]);
+    setIsDrawerOpen(false);
+  };
+
+  const saveProgram = async (values, { keepOpen = false } = {}) => {
     setLoading(true);
     try {
       const ageGroupsWithId = (values.ageGroups || []).map(group => ({
@@ -372,60 +448,67 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
         dispatch(setPrograms(programs));
       }
 
-      if (onSuccess) onSuccess();
-      dispatch(setgetMemberDataChange(true));
-      form.resetFields();
-      setOldAgeGroups([]);
-      setIsDrawerOpen(false);
+      if (!keepOpen) finishSave();
+      setLoading(false);
+      return true;
     } catch (error) {
       console.error(`Error ${mode === 'add' ? 'adding' : 'updating'} program:`, error);
       antdMessage.error(`Failed to ${mode === 'add' ? 'create' : 'update'} program.`);
+      setLoading(false);
+      return false;
     }
-    setLoading(false);
   };
 
   // Handle user response to the update members modal
+  // Popup tab tak khula rahega jab tak saara kaam khatam na ho, aur error popup me hi dikhega.
   const handleUpdateMembersResponse = async (shouldUpdate) => {
-    // State reset hone se pehle values capture kar lo
+    if (!pendingFormValues) return;
     const shouldUpdatePending = shouldUpdate && updatePendingEntries && pendingPreview.length > 0;
     const confirmedPreview = pendingPreview;
-    const groupsForPending = payAmountChangedGroups;
+    const allNewGroups = getNewAgeGroups(pendingFormValues);
+    const groupsToUpdate = changedAgeGroups;
+    const programId = program?.id;
+    const userUid = user?.uid;
 
-    setUpdateMembersModalVisible(false);
-    if (shouldUpdate && pendingFormValues) {
-      // First save the program, then update members
-      await saveProgram(pendingFormValues);
-      if (program?.id) {
-        try {
-          const updated = await updateMembersForAgeGroups(user.uid, program.id, changedAgeGroups);
-          if (updated > 0) {
-            antdMessage.success(`${updated} members updated with new fee details`);
-          }
+    setUpdateError('');
+    setIsUpdatingMembers(true);
+    let step = 'Yojna save';
+    try {
+      const saved = await saveProgram(pendingFormValues, { keepOpen: true });
+      if (!saved) throw new Error('Yojna save nahi ho payi');
 
-          if (shouldUpdatePending) {
-            const pendingUpdated = await updatePendingEntriesForGroups(
-              user.uid, program.id, groupsForPending, confirmedPreview
-            );
-            if (pendingUpdated > 0) {
-              antdMessage.success(`${pendingUpdated} pending entries updated with new pay amount`);
-            }
-          }
-        } catch (error) {
-          antdMessage.error('Members / pending entries update karte waqt error aaya');
+      if (shouldUpdate && programId) {
+        step = 'Members update';
+        const updated = await updateMembersForAgeGroups(userUid, programId, groupsToUpdate, allNewGroups);
+        antdMessage.success(`${updated} members updated with new fee details`);
+
+        if (shouldUpdatePending) {
+          step = 'Pending entries update';
+          const { updated: pUpdated, skipped } = await updatePendingEntriesForGroups(userUid, programId, confirmedPreview);
+          antdMessage.success(
+            `${pUpdated} pending entries updated${skipped ? ` (${skipped} skip — beech me paid ho gayi)` : ''}`
+          );
         }
         dispatch(setgetMemberDataChange(true));
       }
-    } else {
-      // Just save without updating members
-      await saveProgram(pendingFormValues);
+
+      // Sab successful — ab popup aur drawer band karo
+      setUpdateMembersModalVisible(false);
+      setPendingFormValues(null);
+      setChangedAgeGroups([]);
+      resetPendingEntriesState();
+      finishSave();
+    } catch (error) {
+      console.error(`${step} failed:`, error);
+      setUpdateError(`${step} me error: ${error?.code ? error.code + ' — ' : ''}${error?.message || error}`);
+    } finally {
+      setIsUpdatingMembers(false);
     }
-    setPendingFormValues(null);
-    setChangedAgeGroups([]);
-    resetPendingEntriesState();
   };
 
   // Popup band karo bina kuch save kiye — drawer khula rahega taaki user changes dekh/badal sake
   const handleCancelUpdateModal = () => {
+    if (isUpdatingMembers) return; // update chalte waqt band mat karo
     setUpdateMembersModalVisible(false);
     setPendingFormValues(null);
     setChangedAgeGroups([]);
@@ -445,7 +528,19 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
         </div>
       ),
     },
-    { title: 'Age Group', dataIndex: 'ageGroupLabel', key: 'ageGroupLabel', width: 90 },
+    {
+      title: 'Age Group',
+      key: 'ageGroupLabel',
+      width: 100,
+      render: (_, r) => (
+        <div>
+          <div>{r.ageGroupLabel} <span className="text-gray-400">(₹{r.newPayAmount})</span></div>
+          <div className="text-[10px] text-gray-400">
+            {r.matchedBy === 'age' ? 'umar se' : r.matchedBy === 'id' ? 'saved id se' : 'range se'}
+          </div>
+        </div>
+      ),
+    },
     {
       title: 'Pending',
       key: 'count',
@@ -674,6 +769,9 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
           layout="vertical"
           onFinish={handleSubmit}
           className="h-full"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && e.target?.tagName !== 'TEXTAREA') e.preventDefault();
+          }}
         >
           <div className="space-y-6 pb-20">
             {/* Basic Information */}
@@ -942,6 +1040,10 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
             Members updated: <code>payAmount</code>, <code>joinFees</code>, and <code>ageGroupRange</code> will be synced.
           </p>
 
+          {updateError && (
+            <Alert type="error" showIcon message="Update poora nahi hua" description={updateError} />
+          )}
+
           {/* Existing pending entries update option — sirf jab payAmount change hua ho */}
           {payAmountChangedGroups.length > 0 && (
             <Card size="small" className="border border-blue-200 bg-blue-50">
@@ -951,11 +1053,12 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
                 onChange={(e) => handleTogglePendingEntries(e.target.checked)}
               >
                 <span className="font-medium">
-                  Existing <strong>pending</strong> entries ka Pay Amount bhi update karein?
+                  Existing <strong>pending</strong> entries ka Pay Amount bhi sahi karein?
                 </span>
               </Checkbox>
               <div className="text-xs text-gray-500 mt-1 ml-6">
-                Sirf "pending" status wali entries change hongi. Paid / partial entries change nahi hongi.
+                Sirf upar badle gaye age groups ke members. Member ka group uske record me saved group se liya jaata hai
+                (na ho to umar se). Paid / partial entries kabhi change nahi hongi.
               </div>
 
               {updatePendingEntries && (
@@ -969,7 +1072,8 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
                       message="Koi pending entry change karne layak nahi mili."
                       description={pendingStats && (
                         <div className="text-xs space-y-1">
-                          <div>Members mile (in age groups me): <strong>{pendingStats.membersFound}</strong></div>
+                          <div>Badle gaye groups ke members: <strong>{pendingStats.totalMembers}</strong> (program me kisi group me fit nahi: {pendingStats.unmatchedMembers})</div>
+                          <div>Pending/paid entries wale members: <strong>{pendingStats.membersWithPending}</strong></div>
                           <div>Unki kul entries: <strong>{pendingStats.entriesFound}</strong></div>
                           <div>Paid / partial (skip): <strong>{pendingStats.paidSkipped}</strong></div>
                           <div>Pehle se naya amount (skip): <strong>{pendingStats.sameAmountSkipped}</strong></div>
@@ -983,6 +1087,13 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
                         showIcon
                         className="mb-2"
                         message={`${pendingPreview.length} members ki ${pendingTotalEntries} pending entries ka amount change hoga. Confirm karne ke liye niche list check karein.`}
+                        description={pendingStats && (
+                          <span className="text-xs">
+                            Group ke members: {pendingStats.totalMembers} • Kul entries: {pendingStats.entriesFound} •
+                            Paid/partial skip: {pendingStats.paidSkipped} • Pehle se sahi amount: {pendingStats.sameAmountSkipped}
+                            {pendingStats.unmatchedMembers > 0 && ` • Age group me fit nahi: ${pendingStats.unmatchedMembers}`}
+                          </span>
+                        )}
                       />
                       <Table
                         size="small"
