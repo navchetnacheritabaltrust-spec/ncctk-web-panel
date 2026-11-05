@@ -578,6 +578,7 @@ const MemberPayStatus = ({ agentId, agentInfo }) => {
 
   const getExportData = useCallback(() => {
     if (selectionMode === 'all') return filteredData;
+  
     return filteredData.filter((m) => selectedMembers.includes(m.memberId));
   }, [selectionMode, filteredData, selectedMembers]);
 

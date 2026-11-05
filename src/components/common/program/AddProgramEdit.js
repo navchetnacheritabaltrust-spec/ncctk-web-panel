@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Drawer, Form, Input, InputNumber, Select, Space, Card, Typography, App, Radio, Modal } from 'antd';
+import { Button, Drawer, Form, Input, InputNumber, Select, Space, Card, Typography, App, Radio, Modal, Checkbox, Table, Spin, Alert, Tag } from 'antd';
 import { FiPlusCircle, FiTrash2, FiUser, FiMapPin, FiDollarSign, FiCalendar, FiTag, FiEdit2, FiSave, FiAlertTriangle } from 'react-icons/fi';
 import { useAuth } from '@/lib/AuthProvider';
 import { collection, addDoc, updateDoc, doc, query, where, getDocs, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { setgetMemberDataChange, setPrograms } from '@/redux/slices/commonSlice';
 import { useDispatch, useSelector } from 'react-redux';
+
+const chunkArray = (arr, size) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
@@ -21,6 +27,11 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
   const [changedAgeGroups, setChangedAgeGroups] = useState([]);
   const [isUpdatingMembers, setIsUpdatingMembers] = useState(false);
   const [pendingFormValues, setPendingFormValues] = useState(null);
+  // Existing payment_pending entries update option
+  const [updatePendingEntries, setUpdatePendingEntries] = useState(false);
+  const [pendingPreview, setPendingPreview] = useState([]);
+  const [loadingPendingPreview, setLoadingPendingPreview] = useState(false);
+  const [pendingStats, setPendingStats] = useState(null);
   const dispatch=useDispatch()
   const programList = useSelector((state) => state.data.programList);
 
@@ -94,6 +105,27 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     return changed;
   };
 
+  // Age group ke members dhoondo — ageGroup id se, aur purane members ke liye
+  // ageGroupRange ("25-50") se bhi. delete_flag missing ho to bhi member count hoga.
+  const getMemberDocsForGroup = async (membersRef, group, oldGroup) => {
+    const ranges = [...new Set([
+      `${group.startAge}-${group.endAge}`,
+      oldGroup ? `${oldGroup.startAge}-${oldGroup.endAge}` : null,
+    ].filter(Boolean))];
+
+    const snaps = await Promise.all([
+      getDocs(query(membersRef, where('ageGroup', '==', group.id))),
+      getDocs(query(membersRef, where('ageGroupRange', 'in', ranges))),
+    ]);
+
+    const map = new Map();
+    snaps.forEach(snap => snap.forEach(d => {
+      if (d.data().delete_flag === true) return;
+      map.set(d.id, d);
+    }));
+    return [...map.values()];
+  };
+
   // Batch update all members with matching ageGroup ID
   const updateMembersForAgeGroups = async (userUid, programId, groups) => {
     setIsUpdatingMembers(true);
@@ -102,25 +134,24 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
       let totalUpdated = 0;
 
       for (const group of groups) {
-        const q = query(
-          membersRef,
-          where('ageGroup', '==', group.id),
-          where('delete_flag', '==', false)
-        );
-        const snapshot = await getDocs(q);
+        const oldGroup = oldAgeGroups.find(g => g.id === group.id);
+        const memberDocs = await getMemberDocsForGroup(membersRef, group, oldGroup);
+        if (memberDocs.length === 0) continue;
+        const snapshot = { docs: memberDocs, size: memberDocs.length };
 
-        if (snapshot.empty) continue;
-
-        const batch = writeBatch(db);
-        snapshot.forEach(docSnap => {
-          batch.update(docSnap.ref, {
-            joinFees: Number(group.joinFee),
-            payAmount: Number(group.payAmount),
-            ageGroupRange: `${group.startAge}-${group.endAge}`,
-            updatedAt: new Date(),
+        // Firestore batch limit 500 hai — chunks me commit karo
+        for (const docChunk of chunkArray(snapshot.docs, 450)) {
+          const batch = writeBatch(db);
+          docChunk.forEach(docSnap => {
+            batch.update(docSnap.ref, {
+              joinFees: Number(group.joinFee),
+              payAmount: Number(group.payAmount),
+              ageGroupRange: `${group.startAge}-${group.endAge}`,
+              updatedAt: new Date(),
+            });
           });
-        });
-        await batch.commit();
+          await batch.commit();
+        }
         totalUpdated += snapshot.size;
       }
       return totalUpdated;
@@ -130,6 +161,128 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     } finally {
       setIsUpdatingMembers(false);
     }
+  };
+
+  // Sirf wahi groups jinka payAmount change hua hai (joinFee change se pending entries par asar nahi)
+  const payAmountChangedGroups = changedAgeGroups.filter(
+    g => Number(g.payAmount) !== Number(g.oldPayAmount)
+  );
+
+  // Changed age groups ke members ki existing PENDING entries dhoondo.
+  // Paid / partial entries ko kabhi touch nahi karna.
+  const fetchPendingEntriesPreview = async (userUid, programId, groups) => {
+    const membersRef = collection(db, `users/${userUid}/programs/${programId}/members`);
+    const pendingRef = collection(db, `users/${userUid}/programs/${programId}/payment_pending`);
+    const result = [];
+    const stats = { membersFound: 0, entriesFound: 0, paidSkipped: 0, sameAmountSkipped: 0 };
+
+    for (const group of groups) {
+      const newPayAmount = Number(group.payAmount);
+      const oldGroup = oldAgeGroups.find(g => g.id === group.id);
+      const memberDocs = await getMemberDocsForGroup(membersRef, group, oldGroup);
+      stats.membersFound += memberDocs.length;
+      if (memberDocs.length === 0) continue;
+
+      const memberMap = {};
+      memberDocs.forEach(d => { memberMap[d.id] = d.data(); });
+
+      // Firestore 'in' query max 30 values
+      const pendingSnaps = await Promise.all(
+        chunkArray(Object.keys(memberMap), 30).map(ids =>
+          getDocs(query(pendingRef, where('memberId', 'in', ids)))
+        )
+      );
+
+      const byMember = {};
+      pendingSnaps.forEach(snap => snap.forEach(d => {
+        const p = d.data();
+        if (p.delete_flag === true) return;
+        stats.entriesFound++;
+        // Paid / partial / jisme koi payment aa chuka ho — kabhi touch nahi karna
+        const status = String(p.status || 'pending').toLowerCase();
+        if (status === 'paid' || status === 'partial' || Number(p.paidAmount) > 0 || p.transactionId) {
+          stats.paidSkipped++;
+          return;
+        }
+        // Purani entries me payAmount missing ho to app ₹200 maanta hai
+        const currentAmount = p.payAmount === undefined || p.payAmount === null ? 200 : Number(p.payAmount);
+        if (currentAmount === newPayAmount) { stats.sameAmountSkipped++; return; }
+        if (!byMember[p.memberId]) byMember[p.memberId] = [];
+        byMember[p.memberId].push({
+          id: d.id,
+          payAmount: currentAmount,
+          hasMemberDetailsPayAmount: !!(p.memberDetails && 'payAmount' in p.memberDetails),
+        });
+      }));
+
+      Object.entries(byMember).forEach(([memberId, entries]) => {
+        const m = memberMap[memberId] || {};
+        result.push({
+          key: `${group.id}_${memberId}`,
+          memberId,
+          displayName: m.displayName || 'Unknown',
+          registrationNumber: m.registrationNumber || 'N/A',
+          village: m.village || '',
+          ageGroupLabel: `${group.startAge}-${group.endAge}`,
+          newPayAmount,
+          entries,
+        });
+      });
+    }
+    return { rows: result, stats };
+  };
+
+  const handleTogglePendingEntries = async (checked) => {
+    setUpdatePendingEntries(checked);
+    if (!checked || !user?.uid || !program?.id) return;
+    setLoadingPendingPreview(true);
+    try {
+      const { rows, stats } = await fetchPendingEntriesPreview(user.uid, program.id, payAmountChangedGroups);
+      setPendingPreview(rows);
+      setPendingStats(stats);
+    } catch (error) {
+      console.error('Error loading pending entries:', error);
+      antdMessage.error('Pending entries load nahi ho payi');
+      setUpdatePendingEntries(false);
+      setPendingPreview([]);
+      setPendingStats(null);
+    } finally {
+      setLoadingPendingPreview(false);
+    }
+  };
+
+  // Confirm ki gayi pending entries update karo. Update se pehle dobara fetch karke
+  // check karte hain ki entry abhi bhi 'pending' hai — taaki beech me paid hui entry change na ho.
+  const updatePendingEntriesForGroups = async (userUid, programId, groups, confirmedPreview) => {
+    const confirmedIds = new Set(confirmedPreview.flatMap(m => m.entries.map(e => e.id)));
+    const { rows: fresh } = await fetchPendingEntriesPreview(userUid, programId, groups);
+    const toUpdate = fresh
+      .flatMap(m => m.entries.map(e => ({ ...e, newPayAmount: m.newPayAmount })))
+      .filter(e => confirmedIds.has(e.id));
+
+    const now = new Date().toISOString();
+    for (const entryChunk of chunkArray(toUpdate, 450)) {
+      const batch = writeBatch(db);
+      entryChunk.forEach(e => {
+        const data = {
+          payAmount: e.newPayAmount,
+          previousPayAmount: e.payAmount,
+          payAmountUpdatedAt: now,
+          updatedAt: now,
+        };
+        if (e.hasMemberDetailsPayAmount) data['memberDetails.payAmount'] = e.newPayAmount;
+        batch.update(doc(db, `users/${userUid}/programs/${programId}/payment_pending`, e.id), data);
+      });
+      await batch.commit();
+    }
+    return toUpdate.length;
+  };
+
+  const resetPendingEntriesState = () => {
+    setUpdatePendingEntries(false);
+    setPendingPreview([]);
+    setPendingStats(null);
+    setLoadingPendingPreview(false);
   };
 
   const handleSubmit = async (values) => {
@@ -148,6 +301,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
       if (changed.length > 0) {
         setChangedAgeGroups(changed);
         setPendingFormValues(values);
+        resetPendingEntriesState();
         setUpdateMembersModalVisible(true);
         return; // Wait for user confirmation
       }
@@ -232,14 +386,32 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
 
   // Handle user response to the update members modal
   const handleUpdateMembersResponse = async (shouldUpdate) => {
+    // State reset hone se pehle values capture kar lo
+    const shouldUpdatePending = shouldUpdate && updatePendingEntries && pendingPreview.length > 0;
+    const confirmedPreview = pendingPreview;
+    const groupsForPending = payAmountChangedGroups;
+
     setUpdateMembersModalVisible(false);
     if (shouldUpdate && pendingFormValues) {
       // First save the program, then update members
       await saveProgram(pendingFormValues);
       if (program?.id) {
-        const updated = await updateMembersForAgeGroups(user.uid, program.id, changedAgeGroups);
-        if (updated > 0) {
-          antdMessage.success(`${updated} members updated with new fee details`);
+        try {
+          const updated = await updateMembersForAgeGroups(user.uid, program.id, changedAgeGroups);
+          if (updated > 0) {
+            antdMessage.success(`${updated} members updated with new fee details`);
+          }
+
+          if (shouldUpdatePending) {
+            const pendingUpdated = await updatePendingEntriesForGroups(
+              user.uid, program.id, groupsForPending, confirmedPreview
+            );
+            if (pendingUpdated > 0) {
+              antdMessage.success(`${pendingUpdated} pending entries updated with new pay amount`);
+            }
+          }
+        } catch (error) {
+          antdMessage.error('Members / pending entries update karte waqt error aaya');
         }
         dispatch(setgetMemberDataChange(true));
       }
@@ -249,9 +421,57 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     }
     setPendingFormValues(null);
     setChangedAgeGroups([]);
+    resetPendingEntriesState();
   };
 
-  const AgeGroupCard = ({ field, remove }) => (
+  // Popup band karo bina kuch save kiye — drawer khula rahega taaki user changes dekh/badal sake
+  const handleCancelUpdateModal = () => {
+    setUpdateMembersModalVisible(false);
+    setPendingFormValues(null);
+    setChangedAgeGroups([]);
+    resetPendingEntriesState();
+  };
+
+  const pendingTotalEntries = pendingPreview.reduce((s, m) => s + m.entries.length, 0);
+
+  const pendingPreviewColumns = [
+    {
+      title: 'Member',
+      key: 'member',
+      render: (_, r) => (
+        <div>
+          <div className="font-medium">{r.displayName}</div>
+          <div className="text-xs text-gray-400">{r.registrationNumber}{r.village ? ` • ${r.village}` : ''}</div>
+        </div>
+      ),
+    },
+    { title: 'Age Group', dataIndex: 'ageGroupLabel', key: 'ageGroupLabel', width: 90 },
+    {
+      title: 'Pending',
+      key: 'count',
+      width: 75,
+      render: (_, r) => <Tag color="orange">{r.entries.length}</Tag>,
+    },
+    {
+      title: 'Amount',
+      key: 'amount',
+      width: 130,
+      render: (_, r) => {
+        const oldAmounts = [...new Set(r.entries.map(e => e.payAmount))];
+        return (
+          <span className="text-sm">
+            <span className="line-through text-red-500">₹{oldAmounts.join(', ₹')}</span>
+            <span className="ml-1 text-green-600 font-semibold">→ ₹{r.newPayAmount}</span>
+          </span>
+        );
+      },
+    },
+  ];
+
+  const AgeGroupCard = ({ field, remove }) => {
+    // key ko spread se alag rakho, warna har Form.Item ko same key milti hai
+    const { key, ...restField } = field;
+    return (
     <Card 
       key={field.key}
       className="bg-white hover:shadow-md transition-all duration-200 border border-gray-200"
@@ -272,7 +492,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     >
       <div className="grid grid-cols-2 gap-6">
         <Form.Item
-          {...field}
+          {...restField}
           label="Start Age"
           name={[field.name, 'startAge']}
           rules={[{ required: true, message: 'Required' }]}
@@ -285,7 +505,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
           />
         </Form.Item>
         <Form.Item
-          {...field}
+          {...restField}
           label="End Age"
           name={[field.name, 'endAge']}
           rules={[{ required: true, message: 'Required' }]}
@@ -298,7 +518,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
           />
         </Form.Item>
         <Form.Item
-          {...field}
+          {...restField}
           label={
             <div className="flex items-center gap-1">
               <FiDollarSign className="text-green-500" />
@@ -316,7 +536,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
           />
         </Form.Item>
         <Form.Item
-          {...field}
+          {...restField}
           label={
             <div className="flex items-center gap-1">
               <FiDollarSign className="text-green-500" />
@@ -336,7 +556,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
       </div>
       {/* Hidden field for ID */}
       <Form.Item
-        {...field}
+        {...restField}
         name={[field.name, 'id']}
         hidden
       >
@@ -344,8 +564,12 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
       </Form.Item>
     </Card>
   );
+  };
 
-  const LocationGroupCard = ({ field, remove }) => (
+  const LocationGroupCard = ({ field, remove }) => {
+    // key ko spread se alag rakho, warna har Form.Item ko same key milti hai
+    const { key, ...restField } = field;
+    return (
     <Card 
       key={field.key}
       className="bg-white hover:shadow-md transition-all duration-200 border border-gray-200"
@@ -366,7 +590,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     >
       <div className="grid grid-cols-2 gap-6">
         <Form.Item
-          {...field}
+          {...restField}
           label="Group Name"
           name={[field.name, 'groupName']}
           rules={[{ required: true, message: 'Required' }]}
@@ -378,7 +602,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
           />
         </Form.Item>
         <Form.Item
-          {...field}
+          {...restField}
           label="Location"
           name={[field.name, 'location']}
           rules={[{ required: true, message: 'Required' }]}
@@ -390,7 +614,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
           />
         </Form.Item>
         <Form.Item
-          {...field}
+          {...restField}
           label="Location Group"
           name={[field.name, 'groupType']}
           rules={[{ required: true, message: 'Required' }]}
@@ -405,7 +629,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
       </div>
       {/* Hidden field for ID */}
       <Form.Item
-        {...field}
+        {...restField}
         name={[field.name, 'id']}
         hidden
       >
@@ -413,6 +637,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
       </Form.Item>
     </Card>
   );
+  };
 
   const handleOpenDrawer = () => {
     setIsDrawerOpen(true);
@@ -659,20 +884,28 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
           </div>
         }
         open={updateMembersModalVisible}
-        onCancel={() => handleUpdateMembersResponse(false)}
+        onCancel={handleCancelUpdateModal}
+        maskClosable={false}
+        zIndex={1100}
         width={600}
         footer={[
-          <Button key="skip" onClick={() => handleUpdateMembersResponse(false)} disabled={isUpdatingMembers}>
-            No, Skip Member Update
+          <Button key="cancel" onClick={handleCancelUpdateModal} disabled={isUpdatingMembers}>
+            Cancel
+          </Button>,
+          <Button key="skip" onClick={() => handleUpdateMembersResponse(false)} disabled={isUpdatingMembers || loadingPendingPreview}>
+            Save Yojna Only
           </Button>,
           <Button
             key="update"
             type="primary"
             loading={isUpdatingMembers}
+            disabled={loadingPendingPreview}
             onClick={() => handleUpdateMembersResponse(true)}
             className="bg-amber-500 hover:bg-amber-600 border-amber-500"
           >
-            Yes, Update All Members
+            {updatePendingEntries && pendingTotalEntries > 0
+              ? `Yes, Update Members + ${pendingTotalEntries} Pending Entries`
+              : 'Yes, Update All Members'}
           </Button>,
         ]}
       >
@@ -708,6 +941,63 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
           <p className="text-xs text-gray-400">
             Members updated: <code>payAmount</code>, <code>joinFees</code>, and <code>ageGroupRange</code> will be synced.
           </p>
+
+          {/* Existing pending entries update option — sirf jab payAmount change hua ho */}
+          {payAmountChangedGroups.length > 0 && (
+            <Card size="small" className="border border-blue-200 bg-blue-50">
+              <Checkbox
+                checked={updatePendingEntries}
+                disabled={loadingPendingPreview || isUpdatingMembers}
+                onChange={(e) => handleTogglePendingEntries(e.target.checked)}
+              >
+                <span className="font-medium">
+                  Existing <strong>pending</strong> entries ka Pay Amount bhi update karein?
+                </span>
+              </Checkbox>
+              <div className="text-xs text-gray-500 mt-1 ml-6">
+                Sirf "pending" status wali entries change hongi. Paid / partial entries change nahi hongi.
+              </div>
+
+              {updatePendingEntries && (
+                <div className="mt-3">
+                  {loadingPendingPreview ? (
+                    <div className="flex justify-center py-4"><Spin tip="Pending entries load ho rahi hain..." /></div>
+                  ) : pendingPreview.length === 0 ? (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="Koi pending entry change karne layak nahi mili."
+                      description={pendingStats && (
+                        <div className="text-xs space-y-1">
+                          <div>Members mile (in age groups me): <strong>{pendingStats.membersFound}</strong></div>
+                          <div>Unki kul entries: <strong>{pendingStats.entriesFound}</strong></div>
+                          <div>Paid / partial (skip): <strong>{pendingStats.paidSkipped}</strong></div>
+                          <div>Pehle se naya amount (skip): <strong>{pendingStats.sameAmountSkipped}</strong></div>
+                        </div>
+                      )}
+                    />
+                  ) : (
+                    <>
+                      <Alert
+                        type="warning"
+                        showIcon
+                        className="mb-2"
+                        message={`${pendingPreview.length} members ki ${pendingTotalEntries} pending entries ka amount change hoga. Confirm karne ke liye niche list check karein.`}
+                      />
+                      <Table
+                        size="small"
+                        rowKey="key"
+                        columns={pendingPreviewColumns}
+                        dataSource={pendingPreview}
+                        pagination={false}
+                        scroll={{ y: 260 }}
+                      />
+                    </>
+                  )}
+                </div>
+              )}
+            </Card>
+          )}
         </div>
       </Modal>
     </>
