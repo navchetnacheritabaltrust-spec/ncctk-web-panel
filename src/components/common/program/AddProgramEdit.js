@@ -17,7 +17,7 @@ const { TextArea } = Input;
 const { Title, Text } = Typography;
 
 const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null,isDrawerOpen,setIsDrawerOpen }) => {
-  const { message: antdMessage } = App.useApp();
+  const { message: antdMessage, modal: antdModal } = App.useApp();
   const [form] = Form.useForm();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -340,7 +340,19 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
       });
       await batch.commit();
     }
-    return { updated: toUpdate.length, skipped: confirmed.length - toUpdate.length };
+    // Verification: Firestore se dobara padh kar check karo ki amount sach me badla
+    let verified = 0;
+    const failed = [];
+    for (const chunk of chunkArray(toUpdate, 50)) {
+      const snaps = await Promise.all(chunk.map(e => getDoc(doc(db, pendingCol, e.id))));
+      snaps.forEach((snap, idx) => {
+        if (snap.exists() && Number(snap.data().payAmount) === Number(chunk[idx].newPayAmount)) verified++;
+        else failed.push(chunk[idx].id);
+      });
+    }
+    if (failed.length) console.warn('Pending entries jo verify nahi hui:', failed);
+
+    return { updated: toUpdate.length, skipped: confirmed.length - toUpdate.length, verified, failed: failed.length };
   };
 
   const resetPendingEntriesState = () => {
@@ -473,36 +485,66 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     setUpdateError('');
     setIsUpdatingMembers(true);
     let step = 'Yojna save';
+    const summary = { members: null, pending: null };
+    let success = false;
     try {
       const saved = await saveProgram(pendingFormValues, { keepOpen: true });
       if (!saved) throw new Error('Yojna save nahi ho payi');
 
       if (shouldUpdate && programId) {
         step = 'Members update';
-        const updated = await updateMembersForAgeGroups(userUid, programId, groupsToUpdate, allNewGroups);
-        antdMessage.success(`${updated} members updated with new fee details`);
+        summary.members = await updateMembersForAgeGroups(userUid, programId, groupsToUpdate, allNewGroups);
+        setIsUpdatingMembers(true); // updateMembersForAgeGroups ise false kar deta hai — loading chalu rakho
 
         if (shouldUpdatePending) {
           step = 'Pending entries update';
-          const { updated: pUpdated, skipped } = await updatePendingEntriesForGroups(userUid, programId, confirmedPreview);
-          antdMessage.success(
-            `${pUpdated} pending entries updated${skipped ? ` (${skipped} skip — beech me paid ho gayi)` : ''}`
-          );
+          summary.pending = await updatePendingEntriesForGroups(userUid, programId, confirmedPreview);
         }
         dispatch(setgetMemberDataChange(true));
       }
 
-      // Sab successful — ab popup aur drawer band karo
-      setUpdateMembersModalVisible(false);
-      setPendingFormValues(null);
-      setChangedAgeGroups([]);
-      resetPendingEntriesState();
-      finishSave();
+      success = true;
     } catch (error) {
       console.error(`${step} failed:`, error);
       setUpdateError(`${step} me error: ${error?.code ? error.code + ' — ' : ''}${error?.message || error}`);
     } finally {
       setIsUpdatingMembers(false);
+    }
+
+    if (!success) return; // error popup me dikh raha hai — popup khula rahega
+
+    // Sab successful — popup aur drawer band karo
+    setUpdateMembersModalVisible(false);
+    setPendingFormValues(null);
+    setChangedAgeGroups([]);
+    resetPendingEntriesState();
+    try { finishSave(); } catch (e) { console.error('finishSave error:', e); }
+
+    // Result summary dikhao
+    if (shouldUpdate) {
+      const p = summary.pending;
+      antdModal.success({
+        title: 'Update poora ho gaya',
+        zIndex: 1200,
+        content: (
+          <div className="space-y-1 text-sm">
+            <div>✅ Yojna save ho gayi</div>
+            <div>✅ Members updated: <strong>{summary.members ?? 0}</strong></div>
+            {p ? (
+              <>
+                <div>✅ Pending entries updated: <strong>{p.updated}</strong></div>
+                <div>
+                  {p.failed === 0 ? '✅' : '⚠️'} Verify (Firestore se dobara padh kar): <strong>{p.verified}/{p.updated}</strong> sahi amount par
+                </div>
+                {p.skipped > 0 && <div>⏭️ Skip (beech me paid ho gayi): {p.skipped}</div>}
+                {p.failed > 0 && <div className="text-red-500">❌ {p.failed} entries verify nahi hui — console dekhein</div>}
+              </>
+            ) : (
+              <div className="text-gray-500">Pending entries update nahi ki gayi (checkbox tick nahi tha)</div>
+            )}
+          </div>
+        ),
+      });
     }
   };
 
@@ -988,7 +1030,7 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
         width={600}
         footer={[
           <Button key="cancel" onClick={handleCancelUpdateModal} disabled={isUpdatingMembers}>
-            Cancel
+            {updateError ? 'Close' : 'Cancel'}
           </Button>,
           <Button key="skip" onClick={() => handleUpdateMembersResponse(false)} disabled={isUpdatingMembers || loadingPendingPreview}>
             Save Yojna Only

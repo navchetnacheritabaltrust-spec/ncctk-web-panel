@@ -21,6 +21,7 @@ import AddProgramEdit from '@/components/common/program/AddProgramEdit';
 import { deleteProgram, updateProgram } from '@/lib/services/firebaseService';
 import AddProgram from '@/components/common/program';
 import { setPrograms } from '@/redux/slices/commonSlice';
+import { useAuth } from '@/lib/AuthProvider';
 // Import your Redux action
 
 const { Panel } = Collapse;
@@ -28,6 +29,7 @@ const { Meta } = Card;
 
 const Programs = () => {
   const dispatch = useDispatch();
+  const { user } = useAuth();
   const programsList = useSelector((state) => state.data.programList);
   
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -66,11 +68,15 @@ const Programs = () => {
 
   // FIXED: Proper delete function with Redux state update
   const handleDelete = async (programId) => {
+    if (!user?.uid) {
+      message.error('User not authenticated!');
+      return;
+    }
     try {
       setIsDeleting(true);
       
-      // Delete from Firebase
-      await deleteProgram(programId);
+      // Delete from Firebase — service ko userId aur programId dono chahiye
+      await deleteProgram(user.uid, programId);
       
       // Update Redux state by filtering out the deleted program
       const updatedPrograms = programsList.filter(program => program.id !== programId);
@@ -122,7 +128,17 @@ const Programs = () => {
 
   const handleSetSelected = async (programId) => {
     try {
-      await updateProgram(programId, { isSelected: true });
+      if (!user?.uid) {
+        message.error('User not authenticated!');
+        return;
+      }
+      // Baaki programs ko unselect karo, phir is program ko select karo
+      await Promise.all(
+        programsList
+          .filter(p => p.id !== programId && p.isSelected)
+          .map(p => updateProgram(user.uid, p.id, { isSelected: false }))
+      );
+      await updateProgram(user.uid, programId, { isSelected: true });
       
       // Update all other programs in Redux
       const updatedPrograms = programsList.map(program => ({
